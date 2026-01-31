@@ -9,6 +9,9 @@
 /* Initialize markdown tags on a text buffer */
 void markdown_init_tags(GtkTextBuffer *buffer);
 
+/* Update accent colors for existing tags (after config changes). */
+void markdown_update_accent_tags(GtkTextBuffer *buffer);
+
 /* Apply markdown formatting to entire buffer */
 void markdown_apply_tags(GtkTextBuffer *buffer);
 

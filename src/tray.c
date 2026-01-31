@@ -1,6 +1,8 @@
 #include "tray.h"
 #include "app.h"
 #include "config.h"
+#include "editor.h"
+#include "markdown.h"
 #include "window.h"
 #include <libayatana-appindicator/app-indicator.h>
 #include <unistd.h>
@@ -163,6 +165,8 @@ static void on_settings_activate(GtkMenuItem *item, gpointer user_data) {
     /* Settings are applied in the dialog callbacks */
     config_save(config);
     markyd_window_apply_css(app->window);
+    markdown_update_accent_tags(app->editor->buffer);
+    markyd_editor_refresh(app->editor);
   }
 
   gtk_widget_destroy(dialog);
@@ -255,6 +259,29 @@ static void on_theme_changed(GtkComboBoxText *combo, gpointer user_data) {
   config->theme = gtk_combo_box_text_get_active_text(combo);
 }
 
+static gchar *rgba_to_hex(const GdkRGBA *rgba) {
+  guint r = (guint)(CLAMP(rgba->red, 0.0, 1.0) * 255.0 + 0.5);
+  guint g = (guint)(CLAMP(rgba->green, 0.0, 1.0) * 255.0 + 0.5);
+  guint b = (guint)(CLAMP(rgba->blue, 0.0, 1.0) * 255.0 + 0.5);
+  return g_strdup_printf("#%02X%02X%02X", r, g, b);
+}
+
+static void init_color_button(GtkColorButton *btn, const gchar *color_str) {
+  GdkRGBA rgba;
+  if (color_str && gdk_rgba_parse(&rgba, color_str)) {
+    gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(btn), &rgba);
+  }
+}
+
+static void on_color_set(GtkColorButton *btn, gpointer user_data) {
+  gchar **target = (gchar **)user_data;
+  GdkRGBA rgba;
+
+  gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(btn), &rgba);
+  g_free(*target);
+  *target = rgba_to_hex(&rgba);
+}
+
 static void on_autostart_toggled(GtkToggleButton *toggle, gpointer user_data) {
   (void)user_data;
   set_autostart_enabled(gtk_toggle_button_get_active(toggle));
@@ -269,6 +296,10 @@ static GtkWidget *create_settings_dialog(MarkydApp *app) {
   GtkWidget *font_size_spin;
   GtkWidget *theme_combo;
   GtkWidget *autostart_check;
+  GtkWidget *h1_color_btn;
+  GtkWidget *h2_color_btn;
+  GtkWidget *h3_color_btn;
+  GtkWidget *bullet_color_btn;
   gint row = 0;
 
   dialog = gtk_dialog_new_with_buttons(
@@ -359,6 +390,52 @@ static GtkWidget *create_settings_dialog(MarkydApp *app) {
 
   /* Separator */
   GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+  gtk_grid_attach(GTK_GRID(grid), separator, 0, row++, 2, 1);
+
+  /* Markdown accent colors */
+  label = gtk_label_new("Heading 1:");
+  gtk_widget_set_halign(label, GTK_ALIGN_END);
+  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+  h1_color_btn = gtk_color_button_new();
+  init_color_button(GTK_COLOR_BUTTON(h1_color_btn), config->h1_color);
+  gtk_widget_set_halign(h1_color_btn, GTK_ALIGN_START);
+  g_signal_connect(h1_color_btn, "color-set", G_CALLBACK(on_color_set),
+                   &config->h1_color);
+  gtk_grid_attach(GTK_GRID(grid), h1_color_btn, 1, row++, 1, 1);
+
+  label = gtk_label_new("Heading 2:");
+  gtk_widget_set_halign(label, GTK_ALIGN_END);
+  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+  h2_color_btn = gtk_color_button_new();
+  init_color_button(GTK_COLOR_BUTTON(h2_color_btn), config->h2_color);
+  gtk_widget_set_halign(h2_color_btn, GTK_ALIGN_START);
+  g_signal_connect(h2_color_btn, "color-set", G_CALLBACK(on_color_set),
+                   &config->h2_color);
+  gtk_grid_attach(GTK_GRID(grid), h2_color_btn, 1, row++, 1, 1);
+
+  label = gtk_label_new("Heading 3:");
+  gtk_widget_set_halign(label, GTK_ALIGN_END);
+  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+  h3_color_btn = gtk_color_button_new();
+  init_color_button(GTK_COLOR_BUTTON(h3_color_btn), config->h3_color);
+  gtk_widget_set_halign(h3_color_btn, GTK_ALIGN_START);
+  g_signal_connect(h3_color_btn, "color-set", G_CALLBACK(on_color_set),
+                   &config->h3_color);
+  gtk_grid_attach(GTK_GRID(grid), h3_color_btn, 1, row++, 1, 1);
+
+  label = gtk_label_new("List bullet:");
+  gtk_widget_set_halign(label, GTK_ALIGN_END);
+  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+  bullet_color_btn = gtk_color_button_new();
+  init_color_button(GTK_COLOR_BUTTON(bullet_color_btn),
+                    config->list_bullet_color);
+  gtk_widget_set_halign(bullet_color_btn, GTK_ALIGN_START);
+  g_signal_connect(bullet_color_btn, "color-set", G_CALLBACK(on_color_set),
+                   &config->list_bullet_color);
+  gtk_grid_attach(GTK_GRID(grid), bullet_color_btn, 1, row++, 1, 1);
+
+  /* Separator */
+  separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
   gtk_grid_attach(GTK_GRID(grid), separator, 0, row++, 2, 1);
 
   /* Autostart checkbox */

@@ -1,4 +1,5 @@
 #include "markdown.h"
+#include "config.h"
 #include <ctype.h>
 #include <string.h>
 
@@ -61,17 +62,17 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
 
   /* Header 1 - Large bold */
   gtk_text_buffer_create_tag(buffer, TAG_H1, "weight", PANGO_WEIGHT_BOLD,
-                             "scale", 2.0, "foreground", "#61AFEF",
+                             "scale", 2.0, "foreground", config->h1_color,
                              "pixels-below-lines", 12, NULL);
 
   /* Header 2 - Medium bold */
   gtk_text_buffer_create_tag(buffer, TAG_H2, "weight", PANGO_WEIGHT_BOLD,
-                             "scale", 1.6, "foreground", "#C678DD",
+                             "scale", 1.6, "foreground", config->h2_color,
                              "pixels-below-lines", 10, NULL);
 
   /* Header 3 - Small bold */
   gtk_text_buffer_create_tag(buffer, TAG_H3, "weight", PANGO_WEIGHT_BOLD,
-                             "scale", 1.3, "foreground", "#E5C07B",
+                             "scale", 1.3, "foreground", config->h3_color,
                              "pixels-below-lines", 8, NULL);
 
   /* Bold */
@@ -96,8 +97,8 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
   gtk_text_buffer_create_tag(buffer, TAG_LIST, "left-margin", 28, NULL);
 
   /* List bullet styling */
-  gtk_text_buffer_create_tag(buffer, TAG_LIST_BULLET, "foreground", "#61AFEF",
-                             NULL);
+  gtk_text_buffer_create_tag(buffer, TAG_LIST_BULLET, "foreground",
+                             config->list_bullet_color, NULL);
 
   /* Link - Blue underlined */
   gtk_text_buffer_create_tag(buffer, TAG_LINK, "foreground", "#61AFEF",
@@ -108,6 +109,37 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
                              "justification", GTK_JUSTIFY_CENTER,
                              "pixels-above-lines", 6, "pixels-below-lines", 6,
                              NULL);
+}
+
+void markdown_update_accent_tags(GtkTextBuffer *buffer) {
+  GtkTextTagTable *table;
+  GtkTextTag *tag;
+
+  if (!buffer || !config) {
+    return;
+  }
+
+  table = gtk_text_buffer_get_tag_table(buffer);
+  if (!table) {
+    return;
+  }
+
+  tag = gtk_text_tag_table_lookup(table, TAG_H1);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h1_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, TAG_H2);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h2_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, TAG_H3);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h3_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, TAG_LIST_BULLET);
+  if (tag) {
+    g_object_set(tag, "foreground", config->list_bullet_color, NULL);
+  }
 }
 
 /* Helper to check if a line matches a prefix pattern */

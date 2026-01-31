@@ -23,6 +23,12 @@ MarkydConfig *config_new(void) {
   cfg->font_size = 16;
   cfg->theme = g_strdup("dark");
 
+  /* Markdown accent defaults (match previous hardcoded colors) */
+  cfg->h1_color = g_strdup("#61AFEF");
+  cfg->h2_color = g_strdup("#C678DD");
+  cfg->h3_color = g_strdup("#E5C07B");
+  cfg->list_bullet_color = g_strdup("#61AFEF");
+
   cfg->line_numbers = FALSE;
   cfg->word_wrap = TRUE;
 
@@ -34,6 +40,10 @@ void config_free(MarkydConfig *cfg) {
     return;
   g_free(cfg->font_family);
   g_free(cfg->theme);
+  g_free(cfg->h1_color);
+  g_free(cfg->h2_color);
+  g_free(cfg->h3_color);
+  g_free(cfg->list_bullet_color);
   g_free(cfg);
 }
 
@@ -108,6 +118,28 @@ gboolean config_load(MarkydConfig *cfg) {
     cfg->theme = g_key_file_get_string(keyfile, "Appearance", "theme", NULL);
   }
 
+  /* Markdown accents */
+  if (g_key_file_has_key(keyfile, "Markdown", "h1_color", NULL)) {
+    g_free(cfg->h1_color);
+    cfg->h1_color =
+        g_key_file_get_string(keyfile, "Markdown", "h1_color", NULL);
+  }
+  if (g_key_file_has_key(keyfile, "Markdown", "h2_color", NULL)) {
+    g_free(cfg->h2_color);
+    cfg->h2_color =
+        g_key_file_get_string(keyfile, "Markdown", "h2_color", NULL);
+  }
+  if (g_key_file_has_key(keyfile, "Markdown", "h3_color", NULL)) {
+    g_free(cfg->h3_color);
+    cfg->h3_color =
+        g_key_file_get_string(keyfile, "Markdown", "h3_color", NULL);
+  }
+  if (g_key_file_has_key(keyfile, "Markdown", "list_bullet_color", NULL)) {
+    g_free(cfg->list_bullet_color);
+    cfg->list_bullet_color = g_key_file_get_string(
+        keyfile, "Markdown", "list_bullet_color", NULL);
+  }
+
   /* Editor */
   if (g_key_file_has_key(keyfile, "Editor", "word_wrap", NULL))
     cfg->word_wrap =
@@ -138,6 +170,13 @@ gboolean config_save(MarkydConfig *cfg) {
   g_key_file_set_string(keyfile, "Appearance", "font_family", cfg->font_family);
   g_key_file_set_integer(keyfile, "Appearance", "font_size", cfg->font_size);
   g_key_file_set_string(keyfile, "Appearance", "theme", cfg->theme);
+
+  /* Markdown accents */
+  g_key_file_set_string(keyfile, "Markdown", "h1_color", cfg->h1_color);
+  g_key_file_set_string(keyfile, "Markdown", "h2_color", cfg->h2_color);
+  g_key_file_set_string(keyfile, "Markdown", "h3_color", cfg->h3_color);
+  g_key_file_set_string(keyfile, "Markdown", "list_bullet_color",
+                        cfg->list_bullet_color);
 
   /* Editor */
   g_key_file_set_boolean(keyfile, "Editor", "word_wrap", cfg->word_wrap);

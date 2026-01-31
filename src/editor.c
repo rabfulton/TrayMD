@@ -304,6 +304,8 @@ static void schedule_markdown_apply(MarkydEditor *self) {
       g_idle_add_full(G_PRIORITY_LOW, apply_markdown_idle, self, NULL);
 }
 
+void markyd_editor_refresh(MarkydEditor *self) { schedule_markdown_apply(self); }
+
 MarkydEditor *markyd_editor_new(MarkydApp *app) {
   MarkydEditor *self = g_new0(MarkydEditor, 1);
 

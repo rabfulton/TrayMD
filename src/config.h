@@ -17,6 +17,12 @@ typedef struct _MarkydConfig {
   gint font_size; /* in points */
   gchar *theme;   /* "dark", "light", "system" */
 
+  /* Markdown accent colors */
+  gchar *h1_color;
+  gchar *h2_color;
+  gchar *h3_color;
+  gchar *list_bullet_color;
+
   /* Editor */
   gboolean line_numbers;
   gboolean word_wrap;
