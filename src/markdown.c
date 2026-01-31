@@ -16,6 +16,45 @@
 #define TAG_HRULE "hrule"
 #define TAG_INVISIBLE "invisible"
 
+static void collect_hrule_anchor_offsets(GtkTextBuffer *buffer, GArray *offsets) {
+  GtkTextIter iter, end;
+
+  gtk_text_buffer_get_bounds(buffer, &iter, &end);
+  while (!gtk_text_iter_equal(&iter, &end)) {
+    GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
+    if (anchor &&
+        g_object_get_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA) != NULL) {
+      gint offset = gtk_text_iter_get_offset(&iter);
+      g_array_append_val(offsets, offset);
+    }
+    gtk_text_iter_forward_char(&iter);
+  }
+}
+
+static gint compare_int_desc(gconstpointer a, gconstpointer b) {
+  const gint ia = *(const gint *)a;
+  const gint ib = *(const gint *)b;
+  return (ib - ia);
+}
+
+static void delete_char_offsets(GtkTextBuffer *buffer, GArray *offsets) {
+  if (!offsets || offsets->len == 0) {
+    return;
+  }
+
+  g_array_sort(offsets, compare_int_desc);
+  for (guint i = 0; i < offsets->len; i++) {
+    gint offset = g_array_index(offsets, gint, i);
+    GtkTextIter start, end;
+
+    gtk_text_buffer_get_iter_at_offset(buffer, &start, offset);
+    end = start;
+    if (gtk_text_iter_forward_char(&end)) {
+      gtk_text_buffer_delete(buffer, &start, &end);
+    }
+  }
+}
+
 void markdown_init_tags(GtkTextBuffer *buffer) {
   /* Invisible tag - hides markdown syntax characters */
   gtk_text_buffer_create_tag(buffer, TAG_INVISIBLE, "invisible", TRUE, NULL);
@@ -66,12 +105,47 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
 
   /* Horizontal rule */
   gtk_text_buffer_create_tag(buffer, TAG_HRULE, "foreground", "#5C6370",
-                             "justification", GTK_JUSTIFY_CENTER, NULL);
+                             "justification", GTK_JUSTIFY_CENTER,
+                             "pixels-above-lines", 6, "pixels-below-lines", 6,
+                             NULL);
 }
 
 /* Helper to check if a line matches a prefix pattern */
 static gboolean line_starts_with(const gchar *line, const gchar *prefix) {
   return g_str_has_prefix(line, prefix);
+}
+
+static gboolean is_hrule_line(const gchar *line) {
+  gchar *trimmed;
+  gsize len;
+  char c;
+
+  if (!line) {
+    return FALSE;
+  }
+
+  trimmed = g_strstrip(g_strdup(line));
+  len = strlen(trimmed);
+  if (len < 3) {
+    g_free(trimmed);
+    return FALSE;
+  }
+
+  c = trimmed[0];
+  if (!(c == '-' || c == '*' || c == '_')) {
+    g_free(trimmed);
+    return FALSE;
+  }
+
+  for (gsize i = 1; i < len; i++) {
+    if (trimmed[i] != c) {
+      g_free(trimmed);
+      return FALSE;
+    }
+  }
+
+  g_free(trimmed);
+  return TRUE;
 }
 
 /* Apply tag to range and hide syntax markers */
@@ -174,7 +248,6 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
           gint link_start = (p - line_text) + line_offset;
           gint text_start = link_start + 1;
           gint text_end = (bracket_end - line_text) + line_offset;
-          gint url_start = text_end + 2;
           gint url_end = (paren_end - line_text) + line_offset;
 
           GtkTextIter start, end;
@@ -211,6 +284,17 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
 void markdown_apply_tags(GtkTextBuffer *buffer) {
   GtkTextIter start, end, line_start, line_end;
   gchar *line_text;
+  GArray *hrule_offsets;
+  GArray *old_anchor_offsets;
+
+  /*
+   * GtkTextIters become invalid if we mutate the buffer (delete/insert anchors)
+   * while iterating. Do all buffer mutations using collected offsets.
+   */
+  old_anchor_offsets = g_array_new(FALSE, FALSE, sizeof(gint));
+  collect_hrule_anchor_offsets(buffer, old_anchor_offsets);
+  delete_char_offsets(buffer, old_anchor_offsets);
+  g_array_free(old_anchor_offsets, TRUE);
 
   /* Remove all existing tags first */
   gtk_text_buffer_get_bounds(buffer, &start, &end);
@@ -218,6 +302,7 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
 
   /* Process line by line */
   gtk_text_buffer_get_start_iter(buffer, &line_start);
+  hrule_offsets = g_array_new(FALSE, FALSE, sizeof(gint));
 
   while (!gtk_text_iter_is_end(&line_start)) {
     GtkTextIter syntax_end;
@@ -289,11 +374,15 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
       }
     }
     /* Horizontal rule */
-    else if (g_strcmp0(line_text, "---") == 0 ||
-             g_strcmp0(line_text, "***") == 0 ||
-             g_strcmp0(line_text, "___") == 0) {
+    else if (is_hrule_line(line_text)) {
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_HRULE, &line_start,
                                         &line_end);
+      /* Hide the markdown syntax, but leave it editable. */
+      gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
+                                        &line_end);
+
+      /* Record for anchor insertion after this scan completes. */
+      g_array_append_val(hrule_offsets, line_offset);
     }
     /* Regular line - apply inline formatting */
     else {
@@ -307,4 +396,21 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
       break;
     }
   }
+
+  /* Insert hrule anchors from end to start so offsets stay valid. */
+  if (hrule_offsets->len > 0) {
+    g_array_sort(hrule_offsets, compare_int_desc);
+    for (guint i = 0; i < hrule_offsets->len; i++) {
+      gint offset = g_array_index(hrule_offsets, gint, i);
+      GtkTextIter anchor_pos;
+      GtkTextChildAnchor *anchor;
+
+      gtk_text_buffer_get_iter_at_offset(buffer, &anchor_pos, offset);
+      anchor = gtk_text_buffer_create_child_anchor(buffer, &anchor_pos);
+      g_object_set_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA,
+                        GINT_TO_POINTER(1));
+    }
+  }
+
+  g_array_free(hrule_offsets, TRUE);
 }

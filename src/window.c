@@ -23,6 +23,11 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   /* Create main window */
   self->window = gtk_application_window_new(app->gtk_app);
   gtk_window_set_title(GTK_WINDOW(self->window), "TrayMD");
+  /* Keep this as a tray-style window (hide from taskbar/pager/window list). */
+  gtk_window_set_skip_taskbar_hint(GTK_WINDOW(self->window), TRUE);
+  gtk_window_set_skip_pager_hint(GTK_WINDOW(self->window), TRUE);
+  gtk_window_set_type_hint(GTK_WINDOW(self->window),
+                           GDK_WINDOW_TYPE_HINT_UTILITY);
 
   /* Set size from config */
   gtk_window_set_default_size(GTK_WINDOW(self->window), config->window_width,

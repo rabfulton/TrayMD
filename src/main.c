@@ -33,6 +33,9 @@ static gboolean parse_tray_backend(const gchar *value,
 int main(int argc, char **argv) {
   MarkydApp *application;
   int status;
+  GPtrArray *filtered;
+  int filtered_argc;
+  char **filtered_argv;
 
   /* Read env default */
   const gchar *env_backend = g_getenv("TRAYMD_TRAY_BACKEND");
@@ -51,10 +54,14 @@ int main(int argc, char **argv) {
   }
 
   /* Check for --minimized flag before GTK processes args */
+  filtered = g_ptr_array_new();
+  g_ptr_array_add(filtered, argv[0]);
+
   for (int i = 1; i < argc; i++) {
     if (g_strcmp0(argv[i], "--minimized") == 0 ||
         g_strcmp0(argv[i], "-m") == 0) {
       start_minimized = TRUE;
+      continue;
     }
 
     if (g_str_has_prefix(argv[i], "--tray-backend=")) {
@@ -92,6 +99,9 @@ int main(int argc, char **argv) {
       i++;
       continue;
     }
+
+    /* Preserve all other args for GTK/GApplication to parse. */
+    g_ptr_array_add(filtered, argv[i]);
   }
 
   application = markyd_app_new();
@@ -104,7 +114,16 @@ int main(int argc, char **argv) {
   application->start_minimized = start_minimized;
   application->tray_backend = tray_backend;
 
-  status = markyd_app_run(application, argc, argv);
+  filtered_argc = (int)filtered->len;
+  filtered_argv = g_new0(char *, (gsize)filtered_argc + 1);
+  for (int i = 0; i < filtered_argc; i++) {
+    filtered_argv[i] = g_ptr_array_index(filtered, (guint)i);
+  }
+
+  status = markyd_app_run(application, filtered_argc, filtered_argv);
+
+  g_free(filtered_argv);
+  g_ptr_array_free(filtered, TRUE);
 
   markyd_app_free(application);
 

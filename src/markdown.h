@@ -3,6 +3,9 @@
 
 #include <gtk/gtk.h>
 
+/* GObject data key used to mark hrule child anchors inserted into the buffer. */
+#define TRAYMD_HRULE_ANCHOR_DATA "traymd-hr-anchor"
+
 /* Initialize markdown tags on a text buffer */
 void markdown_init_tags(GtkTextBuffer *buffer);
 

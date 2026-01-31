@@ -7,12 +7,102 @@
 static void on_buffer_changed(GtkTextBuffer *buffer, gpointer user_data);
 static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
                              gpointer user_data);
+static void on_text_view_size_allocate(GtkWidget *widget,
+                                       GtkAllocation *allocation,
+                                       gpointer user_data);
+static void apply_markdown(MarkydEditor *self);
+static void schedule_markdown_apply(MarkydEditor *self);
+
+static gboolean hr_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
+  (void)user_data;
+
+  GtkStyleContext *ctx = gtk_widget_get_style_context(widget);
+  GdkRGBA color;
+  gtk_style_context_get_color(ctx, GTK_STATE_FLAG_NORMAL, &color);
+  color.alpha = MIN(color.alpha, 0.35);
+
+  const gint width = gtk_widget_get_allocated_width(widget);
+  const gint height = gtk_widget_get_allocated_height(widget);
+
+  gdk_cairo_set_source_rgba(cr, &color);
+  cairo_set_line_width(cr, 1.0);
+  cairo_move_to(cr, 0, height / 2.0);
+  cairo_line_to(cr, width, height / 2.0);
+  cairo_stroke(cr);
+
+  return FALSE;
+}
+
+static const gint HR_WIDGET_HEIGHT_PX = 22;
+static const gchar *HR_WIDGET_DATA_KEY = "traymd-hr-widget";
+
+static void render_hrules(MarkydEditor *self) {
+  GtkTextIter iter, end;
+
+  gtk_text_buffer_get_bounds(self->buffer, &iter, &end);
+  while (!gtk_text_iter_equal(&iter, &end)) {
+    GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
+    if (anchor &&
+        g_object_get_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA) != NULL) {
+      GtkWidget *hr = g_object_get_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY);
+      if (!hr) {
+        hr = gtk_drawing_area_new();
+        g_signal_connect(hr, "draw", G_CALLBACK(hr_draw), NULL);
+        gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(self->text_view), hr,
+                                          anchor);
+        gtk_widget_show(hr);
+        g_object_set_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY, hr);
+      }
+      gtk_widget_set_size_request(hr, 1, HR_WIDGET_HEIGHT_PX);
+    }
+    gtk_text_iter_forward_char(&iter);
+  }
+
+  /* Ensure hr widgets get the right width after creation. */
+  GtkAllocation allocation;
+  gtk_widget_get_allocation(self->text_view, &allocation);
+  on_text_view_size_allocate(self->text_view, &allocation, self);
+}
+
+static void apply_markdown(MarkydEditor *self) {
+  if (!self) {
+    return;
+  }
+
+  self->updating_tags = TRUE;
+  markdown_apply_tags(self->buffer);
+  render_hrules(self);
+  self->updating_tags = FALSE;
+}
+
+static gboolean apply_markdown_idle(gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  self->markdown_idle_id = 0;
+  apply_markdown(self);
+  return G_SOURCE_REMOVE;
+}
+
+static void schedule_markdown_apply(MarkydEditor *self) {
+  if (!self) {
+    return;
+  }
+  if (self->updating_tags) {
+    return;
+  }
+  if (self->markdown_idle_id != 0) {
+    return;
+  }
+
+  self->markdown_idle_id =
+      g_idle_add_full(G_PRIORITY_LOW, apply_markdown_idle, self, NULL);
+}
 
 MarkydEditor *markyd_editor_new(MarkydApp *app) {
   MarkydEditor *self = g_new0(MarkydEditor, 1);
 
   self->app = app;
   self->updating_tags = FALSE;
+  self->markdown_idle_id = 0;
 
   /* Create text view */
   self->text_view = gtk_text_view_new();
@@ -35,12 +125,19 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
   g_signal_connect(self->text_view, "key-press-event", G_CALLBACK(on_key_press),
                    self);
 
+  g_signal_connect(self->text_view, "size-allocate",
+                   G_CALLBACK(on_text_view_size_allocate), self);
+
   return self;
 }
 
 void markyd_editor_free(MarkydEditor *self) {
   if (!self)
     return;
+  if (self->markdown_idle_id != 0) {
+    g_source_remove(self->markdown_idle_id);
+    self->markdown_idle_id = 0;
+  }
   g_free(self);
 }
 
@@ -50,16 +147,38 @@ void markyd_editor_set_content(MarkydEditor *self, const gchar *content) {
   self->updating_tags = FALSE;
 
   /* Apply markdown formatting */
-  markdown_apply_tags(self->buffer);
+  schedule_markdown_apply(self);
 }
 
 gchar *markyd_editor_get_content(MarkydEditor *self) {
   GtkTextIter start, end;
+  GString *out;
+  GtkTextIter iter;
 
   gtk_text_buffer_get_bounds(self->buffer, &start, &end);
-  /* TRUE = include hidden chars (markdown syntax) so they're preserved when
-   * saving */
-  return gtk_text_buffer_get_text(self->buffer, &start, &end, TRUE);
+
+  /*
+   * TRUE = include hidden chars (markdown syntax) so they're preserved when
+   * saving, but skip embedded widget anchors (e.g., horizontal rules).
+   */
+  out = g_string_new(NULL);
+  iter = start;
+  while (!gtk_text_iter_equal(&iter, &end)) {
+    GtkTextIter next = iter;
+    gtk_text_iter_forward_char(&next);
+
+    if (gtk_text_iter_get_child_anchor(&iter)) {
+      iter = next;
+      continue;
+    }
+
+    gchar *chunk = gtk_text_buffer_get_text(self->buffer, &iter, &next, TRUE);
+    g_string_append(out, chunk);
+    g_free(chunk);
+    iter = next;
+  }
+
+  return g_string_free(out, FALSE);
 }
 
 GtkWidget *markyd_editor_get_widget(MarkydEditor *self) {
@@ -168,7 +287,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
     self->updating_tags = FALSE;
 
     /* Apply markdown formatting */
-    markdown_apply_tags(buffer);
+    schedule_markdown_apply(self);
 
     g_free(line_text);
     return TRUE; /* Consume the event - don't add newline, just clear the marker
@@ -192,7 +311,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
     self->updating_tags = FALSE;
 
     /* Apply markdown formatting */
-    markdown_apply_tags(buffer);
+    schedule_markdown_apply(self);
 
     /* Scroll to cursor to keep it visible */
     GtkTextMark *insert_mark = gtk_text_buffer_get_insert(buffer);
@@ -210,6 +329,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
 
 static void on_buffer_changed(GtkTextBuffer *buffer, gpointer user_data) {
   MarkydEditor *self = (MarkydEditor *)user_data;
+  (void)buffer;
 
   if (self->updating_tags) {
     return;
@@ -218,8 +338,32 @@ static void on_buffer_changed(GtkTextBuffer *buffer, gpointer user_data) {
   /* Schedule auto-save */
   markyd_app_schedule_save(self->app);
 
-  /* Apply markdown tags */
-  self->updating_tags = TRUE;
-  markdown_apply_tags(buffer);
-  self->updating_tags = FALSE;
+  /* Apply markdown tags (deferred to avoid invalidating GTK iterators). */
+  schedule_markdown_apply(self);
+}
+
+static void on_text_view_size_allocate(GtkWidget *widget,
+                                       GtkAllocation *allocation,
+                                       gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  (void)widget;
+
+  gint width = allocation->width;
+  width -= gtk_text_view_get_left_margin(GTK_TEXT_VIEW(self->text_view));
+  width -= gtk_text_view_get_right_margin(GTK_TEXT_VIEW(self->text_view));
+  width = MAX(width, 1);
+
+  GtkTextIter iter, end;
+  gtk_text_buffer_get_bounds(self->buffer, &iter, &end);
+  while (!gtk_text_iter_equal(&iter, &end)) {
+    GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
+    if (anchor &&
+        g_object_get_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA) != NULL) {
+      GtkWidget *hr = g_object_get_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY);
+      if (hr) {
+        gtk_widget_set_size_request(hr, width, HR_WIDGET_HEIGHT_PX);
+      }
+    }
+    gtk_text_iter_forward_char(&iter);
+  }
 }

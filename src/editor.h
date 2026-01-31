@@ -12,6 +12,9 @@ typedef struct _MarkydEditor {
 
   /* Prevent recursive tag application */
   gboolean updating_tags;
+
+  /* Coalesce markdown re-rendering to idle to avoid invalidating GTK iterators. */
+  guint markdown_idle_id;
 } MarkydEditor;
 
 /* Lifecycle */
