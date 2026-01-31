@@ -1,0 +1,49 @@
+CC = gcc
+CFLAGS = -Wall -Wextra -O2 -g `pkg-config --cflags gtk+-3.0 ayatana-appindicator3-0.1`
+LDFLAGS = `pkg-config --libs gtk+-3.0 ayatana-appindicator3-0.1`
+
+SRCDIR = src
+OBJDIR = obj
+BINDIR = .
+
+SOURCES = $(wildcard $(SRCDIR)/*.c)
+OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+TARGET = $(BINDIR)/traymd
+
+PREFIX ?= /usr/local
+BINPREFIX = $(PREFIX)/bin
+DATAPREFIX = $(PREFIX)/share
+
+.PHONY: all clean install uninstall
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
+
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+clean:
+	rm -rf $(OBJDIR) $(TARGET)
+
+install: $(TARGET)
+	install -Dm755 $(TARGET) $(DESTDIR)$(BINPREFIX)/traymd
+	install -Dm644 assets/traymd.desktop $(DESTDIR)$(DATAPREFIX)/applications/traymd.desktop
+
+uninstall:
+	rm -f $(DESTDIR)$(BINPREFIX)/traymd
+	rm -f $(DESTDIR)$(DATAPREFIX)/applications/traymd.desktop
+
+# Header dependencies
+$(OBJDIR)/main.o: $(SRCDIR)/app.h $(SRCDIR)/tray.h $(SRCDIR)/window.h
+$(OBJDIR)/app.o: $(SRCDIR)/app.h $(SRCDIR)/config.h $(SRCDIR)/notes.h $(SRCDIR)/window.h $(SRCDIR)/editor.h
+$(OBJDIR)/window.o: $(SRCDIR)/window.h $(SRCDIR)/app.h $(SRCDIR)/editor.h $(SRCDIR)/config.h
+$(OBJDIR)/editor.o: $(SRCDIR)/editor.h $(SRCDIR)/markdown.h $(SRCDIR)/app.h
+$(OBJDIR)/markdown.o: $(SRCDIR)/markdown.h
+$(OBJDIR)/notes.o: $(SRCDIR)/notes.h
+$(OBJDIR)/tray.o: $(SRCDIR)/tray.h $(SRCDIR)/app.h $(SRCDIR)/window.h $(SRCDIR)/config.h
+$(OBJDIR)/config.o: $(SRCDIR)/config.h

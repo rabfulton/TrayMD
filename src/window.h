@@ -1,0 +1,38 @@
+#ifndef MARKYD_WINDOW_H
+#define MARKYD_WINDOW_H
+
+#include <gtk/gtk.h>
+
+typedef struct _MarkydApp MarkydApp;
+typedef struct _MarkydEditor MarkydEditor;
+
+typedef struct _MarkydWindow {
+  GtkWidget *window;
+  GtkWidget *header_bar;
+  GtkWidget *btn_new;
+  GtkWidget *btn_prev;
+  GtkWidget *btn_next;
+  GtkWidget *lbl_counter;
+  GtkWidget *scroll;
+  MarkydEditor *editor;
+  MarkydApp *app;
+} MarkydWindow;
+
+/* Lifecycle */
+MarkydWindow *markyd_window_new(MarkydApp *app);
+void markyd_window_free(MarkydWindow *win);
+
+/* Visibility */
+void markyd_window_show(MarkydWindow *win);
+void markyd_window_hide(MarkydWindow *win);
+void markyd_window_toggle(MarkydWindow *win);
+gboolean markyd_window_is_visible(MarkydWindow *win);
+
+/* UI updates */
+void markyd_window_update_counter(MarkydWindow *win);
+void markyd_window_update_nav_sensitivity(MarkydWindow *win);
+
+/* Styling */
+void markyd_window_apply_css(MarkydWindow *win);
+
+#endif /* MARKYD_WINDOW_H */

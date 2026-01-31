@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=TrayMD
+Comment=Lightweight markdown notes
+Exec=traymd
+Icon=accessories-text-editor
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;
+Keywords=notes;markdown;editor;
