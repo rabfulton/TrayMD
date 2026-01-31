@@ -53,6 +53,12 @@ make
 
 ## Installation
 
+### Arch Linux (AUR)
+
+- https://aur.archlinux.org/packages/traymd
+
+### From Source
+
 ```bash
 sudo make install
 ```
@@ -60,6 +66,24 @@ sudo make install
 This installs:
 - Binary to `/usr/local/bin/traymd`
 - Desktop file to `/usr/local/share/applications/traymd.desktop`
+
+### Debian/Ubuntu (.deb)
+
+Download the `.deb` from the GitHub Actions “Package” workflow artifacts (tag
+builds) and install it with:
+
+```bash
+sudo apt install ./traymd_*.deb
+```
+
+### Fedora/RHEL (.rpm)
+
+Download the `.rpm` from the GitHub Actions “Package” workflow artifacts (tag
+builds) and install it with:
+
+```bash
+sudo dnf install ./traymd-*.rpm
+```
 
 ## Uninstallation
 

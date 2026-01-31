@@ -1,0 +1,36 @@
+Name:           traymd
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        Lightweight markdown notes in the system tray
+
+License:        MIT
+URL:            @URL@
+Source0:        traymd-%{version}.tar.gz
+
+BuildRequires:  gcc
+BuildRequires:  make
+BuildRequires:  pkgconfig
+BuildRequires:  gtk3-devel
+BuildRequires:  libayatana-appindicator-gtk3-devel
+
+Requires:       gtk3
+Requires:       libayatana-appindicator-gtk3
+
+%description
+TrayMD is a lightweight GTK3 markdown notes application designed to live in your system tray.
+
+%prep
+%autosetup -n traymd-%{version}
+
+%build
+make %{?_smp_mflags}
+
+%install
+rm -rf %{buildroot}
+make install DESTDIR=%{buildroot} PREFIX=%{_prefix}
+
+%files
+%{_bindir}/traymd
+%{_datadir}/applications/traymd.desktop
+
+%changelog

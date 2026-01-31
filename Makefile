@@ -11,8 +11,11 @@ OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 TARGET = $(BINDIR)/traymd
 
 PREFIX ?= /usr/local
-BINPREFIX = $(PREFIX)/bin
-DATAPREFIX = $(PREFIX)/share
+DESTDIR ?=
+
+bindir ?= $(PREFIX)/bin
+datadir ?= $(PREFIX)/share
+applicationsdir ?= $(datadir)/applications
 
 .PHONY: all clean install uninstall
 
@@ -31,12 +34,12 @@ clean:
 	rm -rf $(OBJDIR) $(TARGET)
 
 install: $(TARGET)
-	install -Dm755 $(TARGET) $(DESTDIR)$(BINPREFIX)/traymd
-	install -Dm644 assets/traymd.desktop $(DESTDIR)$(DATAPREFIX)/applications/traymd.desktop
+	install -Dm755 $(TARGET) $(DESTDIR)$(bindir)/traymd
+	install -Dm644 assets/traymd.desktop $(DESTDIR)$(applicationsdir)/traymd.desktop
 
 uninstall:
-	rm -f $(DESTDIR)$(BINPREFIX)/traymd
-	rm -f $(DESTDIR)$(DATAPREFIX)/applications/traymd.desktop
+	rm -f $(DESTDIR)$(bindir)/traymd
+	rm -f $(DESTDIR)$(applicationsdir)/traymd.desktop
 
 # Header dependencies
 $(OBJDIR)/main.o: $(SRCDIR)/app.h $(SRCDIR)/tray.h $(SRCDIR)/window.h

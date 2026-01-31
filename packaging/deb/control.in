@@ -1,0 +1,9 @@
+Package: traymd
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: @MAINTAINER@
+Depends: libgtk-3-0, libayatana-appindicator3-1
+Description: TrayMD - lightweight markdown notes in the system tray
+ TrayMD is a lightweight GTK3 markdown notes application designed to live in your system tray.
