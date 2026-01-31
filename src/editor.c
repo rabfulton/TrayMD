@@ -10,6 +10,12 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
 static void on_text_view_size_allocate(GtkWidget *widget,
                                        GtkAllocation *allocation,
                                        gpointer user_data);
+static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event,
+                                  gpointer user_data);
+static gboolean on_motion_notify(GtkWidget *widget, GdkEventMotion *event,
+                                 gpointer user_data);
+static gboolean on_leave_notify(GtkWidget *widget, GdkEventCrossing *event,
+                                gpointer user_data);
 static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
@@ -35,6 +41,96 @@ static gboolean hr_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
 
 static const gint HR_WIDGET_HEIGHT_PX = 22;
 static const gchar *HR_WIDGET_DATA_KEY = "traymd-hr-widget";
+
+static gboolean get_link_url_at_iter(GtkTextBuffer *buffer, GtkTextIter *at,
+                                     gchar **out_url) {
+  GtkTextTagTable *table;
+  GtkTextTag *tag;
+  GtkTextIter start;
+  GtkTextIter end;
+  GtkTextIter line_end;
+  gchar *tail;
+  gchar *url = NULL;
+
+  if (!buffer || !at || !out_url) {
+    return FALSE;
+  }
+  *out_url = NULL;
+
+  table = gtk_text_buffer_get_tag_table(buffer);
+  tag = gtk_text_tag_table_lookup(table, "link");
+  if (!tag) {
+    return FALSE;
+  }
+  if (!gtk_text_iter_has_tag(at, tag)) {
+    return FALSE;
+  }
+
+  start = *at;
+  end = *at;
+  gtk_text_iter_backward_to_tag_toggle(&start, tag);
+  gtk_text_iter_forward_to_tag_toggle(&end, tag);
+
+  line_end = end;
+  if (!gtk_text_iter_ends_line(&line_end)) {
+    gtk_text_iter_forward_to_line_end(&line_end);
+  }
+
+  /*
+   * Markdown link: the URL is right after the visible link text: ](url)
+   * Auto-link: the visible text itself is the URL.
+   */
+  tail = gtk_text_buffer_get_text(buffer, &end, &line_end, TRUE);
+  if (tail) {
+    GRegex *re = g_regex_new("^\\]\\(([^)]+)\\)", 0, 0, NULL);
+    GMatchInfo *match = NULL;
+    if (re && g_regex_match(re, tail, 0, &match)) {
+      url = g_match_info_fetch(match, 1);
+    }
+    if (match) {
+      g_match_info_free(match);
+    }
+    if (re) {
+      g_regex_unref(re);
+    }
+    g_free(tail);
+  }
+
+  if (!url || url[0] == '\0') {
+    g_free(url);
+    url = gtk_text_buffer_get_text(buffer, &start, &end, TRUE);
+  }
+
+  if (!url || url[0] == '\0') {
+    g_free(url);
+    return FALSE;
+  }
+
+  *out_url = url;
+  return TRUE;
+}
+
+static void set_link_cursor(MarkydEditor *self, gboolean active) {
+  GdkWindow *win = gtk_text_view_get_window(GTK_TEXT_VIEW(self->text_view),
+                                            GTK_TEXT_WINDOW_TEXT);
+  if (!win) {
+    return;
+  }
+
+  if (active) {
+    GdkDisplay *display = gdk_window_get_display(win);
+    GdkCursor *cursor = gdk_cursor_new_from_name(display, "pointer");
+    if (!cursor) {
+      cursor = gdk_cursor_new_for_display(display, GDK_HAND2);
+    }
+    gdk_window_set_cursor(win, cursor);
+    if (cursor) {
+      g_object_unref(cursor);
+    }
+  } else {
+    gdk_window_set_cursor(win, NULL);
+  }
+}
 
 static void render_hrules(MarkydEditor *self) {
   GtkTextIter iter, end;
@@ -127,6 +223,17 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
 
   g_signal_connect(self->text_view, "size-allocate",
                    G_CALLBACK(on_text_view_size_allocate), self);
+
+  /* Link hover/click */
+  gtk_widget_add_events(self->text_view, GDK_POINTER_MOTION_MASK |
+                                            GDK_LEAVE_NOTIFY_MASK |
+                                            GDK_BUTTON_RELEASE_MASK);
+  g_signal_connect(self->text_view, "button-release-event",
+                   G_CALLBACK(on_button_release), self);
+  g_signal_connect(self->text_view, "motion-notify-event",
+                   G_CALLBACK(on_motion_notify), self);
+  g_signal_connect(self->text_view, "leave-notify-event",
+                   G_CALLBACK(on_leave_notify), self);
 
   return self;
 }
@@ -366,4 +473,78 @@ static void on_text_view_size_allocate(GtkWidget *widget,
     }
     gtk_text_iter_forward_char(&iter);
   }
+}
+
+static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event,
+                                  gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  GtkTextIter iter;
+  gint bx, by;
+  gchar *url = NULL;
+  GError *error = NULL;
+
+  if (event->button != 1) {
+    return FALSE;
+  }
+
+  /* Use Ctrl+Click to avoid opening links while selecting text. */
+  if ((event->state & GDK_CONTROL_MASK) == 0) {
+    return FALSE;
+  }
+
+  gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(widget),
+                                        GTK_TEXT_WINDOW_TEXT, (gint)event->x,
+                                        (gint)event->y, &bx, &by);
+  gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(widget), &iter, bx, by);
+
+  if (!get_link_url_at_iter(self->buffer, &iter, &url)) {
+    return FALSE;
+  }
+
+  if (g_uri_parse_scheme(url) == NULL) {
+    gchar *with_scheme = g_strdup_printf("https://%s", url);
+    g_free(url);
+    url = with_scheme;
+  }
+
+  GtkWidget *toplevel = gtk_widget_get_toplevel(widget);
+  if (!gtk_show_uri_on_window(GTK_IS_WINDOW(toplevel) ? GTK_WINDOW(toplevel)
+                                                      : NULL,
+                              url, GDK_CURRENT_TIME, &error)) {
+    if (error) {
+      g_printerr("Failed to open link '%s': %s\n", url, error->message);
+      g_clear_error(&error);
+    }
+  }
+
+  g_free(url);
+  return TRUE;
+}
+
+static gboolean on_motion_notify(GtkWidget *widget, GdkEventMotion *event,
+                                 gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  GtkTextIter iter;
+  gint bx, by;
+  gchar *url = NULL;
+
+  gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(widget),
+                                        GTK_TEXT_WINDOW_TEXT, (gint)event->x,
+                                        (gint)event->y, &bx, &by);
+  gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(widget), &iter, bx, by);
+
+  gboolean over_link = get_link_url_at_iter(self->buffer, &iter, &url);
+  g_free(url);
+  set_link_cursor(self, over_link);
+
+  return FALSE;
+}
+
+static gboolean on_leave_notify(GtkWidget *widget, GdkEventCrossing *event,
+                                gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  (void)widget;
+  (void)event;
+  set_link_cursor(self, FALSE);
+  return FALSE;
 }

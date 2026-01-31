@@ -185,6 +185,8 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
   gchar *line_text;
   const gchar *p;
   gint line_offset;
+  GRegex *url_re;
+  GMatchInfo *url_match;
 
   line_text = gtk_text_buffer_get_text(buffer, line_start, line_end, FALSE);
   line_offset = gtk_text_iter_get_offset(line_start);
@@ -277,6 +279,49 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
 
     p++;
   }
+
+  /* Auto-link plain URLs (e.g., https://..., www....) */
+  url_re = g_regex_new(
+      "\\b(https?://[^\\s<>()]+|www\\.[^\\s<>()]+)", G_REGEX_CASELESS, 0, NULL);
+  if (!url_re) {
+    g_free(line_text);
+    return;
+  }
+
+  url_match = NULL;
+  if (g_regex_match(url_re, line_text, 0, &url_match)) {
+    while (g_match_info_matches(url_match)) {
+      gint mstart = 0, mend = 0;
+      if (g_match_info_fetch_pos(url_match, 1, &mstart, &mend)) {
+        /* Trim common trailing punctuation */
+        while (mend > mstart) {
+          char c = line_text[mend - 1];
+          if (c == '.' || c == ',' || c == ';' || c == ':' || c == '!' ||
+              c == '?' || c == ')' || c == ']' || c == '}' || c == '"' ||
+              c == '\'') {
+            mend--;
+            continue;
+          }
+          break;
+        }
+
+        if (mend > mstart) {
+          GtkTextIter s, e;
+          gtk_text_buffer_get_iter_at_offset(buffer, &s, line_offset + mstart);
+          gtk_text_buffer_get_iter_at_offset(buffer, &e, line_offset + mend);
+          gtk_text_buffer_apply_tag_by_name(buffer, TAG_LINK, &s, &e);
+        }
+      }
+      if (!g_match_info_next(url_match, NULL)) {
+        break;
+      }
+    }
+  }
+
+  if (url_match) {
+    g_match_info_free(url_match);
+  }
+  g_regex_unref(url_re);
 
   g_free(line_text);
 }

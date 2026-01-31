@@ -11,6 +11,7 @@ A lightweight GTK 3 markdown notes application for Linux system trays.
 - **Auto-save** - Notes are saved automatically (500ms after last keystroke)
 - **Minimal UI** - Clean toolbar with new note and navigation buttons
 - **Lightweight** - Pure C, no web technologies, fast startup
+- **Hyperlink support** - ctrl left click links to open them
 
 ## Supported Markdown
 
@@ -86,3 +87,9 @@ your existing `markyd` data is migrated automatically on startup).
 ## License
 
 MIT License
+
+## Other Useful Projects
+
+- Try my AI panel plugin for XFCE [XFCE Ask](https://github.com/rabfulton/xfce-ask)
+- For a feature complete AI application try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
+- A lightweight speech to text implementation [Auriscribe](https://github.com/rabfulton/Auriscribe)
