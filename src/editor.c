@@ -19,6 +19,71 @@ static gboolean on_leave_notify(GtkWidget *widget, GdkEventCrossing *event,
 static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
+static const gunichar UNORDERED_LIST_BULLET = 0x2022; /* '•' */
+
+static gint compare_int_desc(gconstpointer a, gconstpointer b) {
+  const gint ia = *(const gint *)a;
+  const gint ib = *(const gint *)b;
+  return (ib - ia);
+}
+
+static gchar *markdown_to_display_text(const gchar *content) {
+  if (!content) {
+    return g_strdup("");
+  }
+
+  GString *out = g_string_sized_new(strlen(content));
+  const gchar *p = content;
+  gboolean at_line_start = TRUE;
+
+  while (*p) {
+    if (at_line_start && (p[0] == '-' || p[0] == '*') && p[1] == ' ') {
+      g_string_append_unichar(out, UNORDERED_LIST_BULLET);
+      g_string_append_c(out, ' ');
+      p += 2;
+      at_line_start = FALSE;
+      continue;
+    }
+
+    gunichar c = g_utf8_get_char(p);
+    g_string_append_unichar(out, c);
+    at_line_start = (c == '\n');
+    p = g_utf8_next_char(p);
+  }
+
+  return g_string_free(out, FALSE);
+}
+
+static gchar *display_to_markdown_text(const gchar *content) {
+  if (!content) {
+    return g_strdup("");
+  }
+
+  GString *out = g_string_sized_new(strlen(content));
+  const gchar *p = content;
+  gboolean at_line_start = TRUE;
+
+  while (*p) {
+    if (at_line_start) {
+      gunichar c0 = g_utf8_get_char(p);
+      const gchar *p1 = g_utf8_next_char(p);
+      if (c0 == UNORDERED_LIST_BULLET && *p1 == ' ') {
+        g_string_append(out, "- ");
+        p = p1 + 1;
+        at_line_start = FALSE;
+        continue;
+      }
+    }
+
+    gunichar c = g_utf8_get_char(p);
+    g_string_append_unichar(out, c);
+    at_line_start = (c == '\n');
+    p = g_utf8_next_char(p);
+  }
+
+  return g_string_free(out, FALSE);
+}
+
 static gboolean hr_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
   (void)user_data;
 
@@ -41,6 +106,49 @@ static gboolean hr_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
 
 static const gint HR_WIDGET_HEIGHT_PX = 22;
 static const gchar *HR_WIDGET_DATA_KEY = "traymd-hr-widget";
+
+static void normalize_list_markers(MarkydEditor *self) {
+  GtkTextIter line_start, end;
+  GArray *offsets = g_array_new(FALSE, FALSE, sizeof(gint));
+
+  gtk_text_buffer_get_bounds(self->buffer, &line_start, &end);
+  gtk_text_iter_set_line_offset(&line_start, 0);
+
+  while (!gtk_text_iter_is_end(&line_start)) {
+    gint offset = gtk_text_iter_get_offset(&line_start);
+    GtkTextIter a = line_start;
+    GtkTextIter b = line_start;
+
+    if (gtk_text_iter_forward_char(&b)) {
+      gunichar ch0 = gtk_text_iter_get_char(&a);
+      gunichar ch1 = gtk_text_iter_get_char(&b);
+
+      if ((ch0 == '-' || ch0 == '*') && ch1 == ' ') {
+        g_array_append_val(offsets, offset);
+      }
+    }
+
+    if (!gtk_text_iter_forward_line(&line_start)) {
+      break;
+    }
+  }
+
+  if (offsets->len > 0) {
+    g_array_sort(offsets, compare_int_desc);
+    for (guint i = 0; i < offsets->len; i++) {
+      gint offset = g_array_index(offsets, gint, i);
+      GtkTextIter start, finish;
+      gtk_text_buffer_get_iter_at_offset(self->buffer, &start, offset);
+      finish = start;
+      if (gtk_text_iter_forward_chars(&finish, 2)) {
+        gtk_text_buffer_delete(self->buffer, &start, &finish);
+        gtk_text_buffer_insert(self->buffer, &start, "• ", -1);
+      }
+    }
+  }
+
+  g_array_free(offsets, TRUE);
+}
 
 static gboolean get_link_url_at_iter(GtkTextBuffer *buffer, GtkTextIter *at,
                                      gchar **out_url) {
@@ -138,18 +246,20 @@ static void render_hrules(MarkydEditor *self) {
   gtk_text_buffer_get_bounds(self->buffer, &iter, &end);
   while (!gtk_text_iter_equal(&iter, &end)) {
     GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
-    if (anchor &&
-        g_object_get_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA) != NULL) {
-      GtkWidget *hr = g_object_get_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY);
-      if (!hr) {
-        hr = gtk_drawing_area_new();
-        g_signal_connect(hr, "draw", G_CALLBACK(hr_draw), NULL);
-        gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(self->text_view), hr,
-                                          anchor);
-        gtk_widget_show(hr);
-        g_object_set_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY, hr);
+    if (anchor) {
+      if (g_object_get_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA) !=
+          NULL) {
+        GtkWidget *hr = g_object_get_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY);
+        if (!hr) {
+          hr = gtk_drawing_area_new();
+          g_signal_connect(hr, "draw", G_CALLBACK(hr_draw), NULL);
+          gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(self->text_view), hr,
+                                            anchor);
+          gtk_widget_show(hr);
+          g_object_set_data(G_OBJECT(anchor), HR_WIDGET_DATA_KEY, hr);
+        }
+        gtk_widget_set_size_request(hr, 1, HR_WIDGET_HEIGHT_PX);
       }
-      gtk_widget_set_size_request(hr, 1, HR_WIDGET_HEIGHT_PX);
     }
     gtk_text_iter_forward_char(&iter);
   }
@@ -166,6 +276,7 @@ static void apply_markdown(MarkydEditor *self) {
   }
 
   self->updating_tags = TRUE;
+  normalize_list_markers(self);
   markdown_apply_tags(self->buffer);
   render_hrules(self);
   self->updating_tags = FALSE;
@@ -249,9 +360,11 @@ void markyd_editor_free(MarkydEditor *self) {
 }
 
 void markyd_editor_set_content(MarkydEditor *self, const gchar *content) {
+  gchar *display = markdown_to_display_text(content);
   self->updating_tags = TRUE;
-  gtk_text_buffer_set_text(self->buffer, content ? content : "", -1);
+  gtk_text_buffer_set_text(self->buffer, display ? display : "", -1);
   self->updating_tags = FALSE;
+  g_free(display);
 
   /* Apply markdown formatting */
   schedule_markdown_apply(self);
@@ -261,6 +374,8 @@ gchar *markyd_editor_get_content(MarkydEditor *self) {
   GtkTextIter start, end;
   GString *out;
   GtkTextIter iter;
+  gchar *raw;
+  gchar *converted;
 
   gtk_text_buffer_get_bounds(self->buffer, &start, &end);
 
@@ -285,7 +400,10 @@ gchar *markyd_editor_get_content(MarkydEditor *self) {
     iter = next;
   }
 
-  return g_string_free(out, FALSE);
+  raw = g_string_free(out, FALSE);
+  converted = display_to_markdown_text(raw);
+  g_free(raw);
+  return converted;
 }
 
 GtkWidget *markyd_editor_get_widget(MarkydEditor *self) {
@@ -297,9 +415,16 @@ static gboolean is_empty_list_item(const gchar *line) {
   if (!line || !*line)
     return FALSE;
 
+  const gchar *bullet_prefix = "• ";
+  const gsize bullet_prefix_len = strlen(bullet_prefix);
+
   /* Unordered list: "- " or "* " with nothing after */
   if ((line[0] == '-' || line[0] == '*') && line[1] == ' ') {
     return line[2] == '\0';
+  }
+  /* Unordered list (display): "• " with nothing after */
+  if (g_str_has_prefix(line, bullet_prefix)) {
+    return strlen(line) == bullet_prefix_len;
   }
 
   /* Ordered list: "1. ", "2. ", etc. with nothing after */
@@ -320,6 +445,9 @@ static gchar *get_next_list_prefix(const gchar *line) {
   if (!line || !*line)
     return NULL;
 
+  const gchar *bullet_prefix = "• ";
+  const gsize bullet_prefix_len = strlen(bullet_prefix);
+
   /* Unordered list: "- " or "* " */
   if ((line[0] == '-' || line[0] == '*') && line[1] == ' ') {
     /* Check if line has content after prefix */
@@ -327,6 +455,13 @@ static gchar *get_next_list_prefix(const gchar *line) {
       return NULL; /* Empty list item, signal to end list */
     }
     return g_strndup(line, 2);
+  }
+  /* Unordered list (display): "• " */
+  if (g_str_has_prefix(line, bullet_prefix)) {
+    if (strlen(line) == bullet_prefix_len) {
+      return NULL;
+    }
+    return g_strdup(bullet_prefix);
   }
 
   /* Ordered list: "1. ", "2. ", etc. */

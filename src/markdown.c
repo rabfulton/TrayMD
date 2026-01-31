@@ -16,14 +16,14 @@
 #define TAG_HRULE "hrule"
 #define TAG_INVISIBLE "invisible"
 
-static void collect_hrule_anchor_offsets(GtkTextBuffer *buffer, GArray *offsets) {
+static void collect_anchor_offsets(GtkTextBuffer *buffer, const gchar *data_key,
+                                   GArray *offsets) {
   GtkTextIter iter, end;
 
   gtk_text_buffer_get_bounds(buffer, &iter, &end);
   while (!gtk_text_iter_equal(&iter, &end)) {
     GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
-    if (anchor &&
-        g_object_get_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA) != NULL) {
+    if (anchor && g_object_get_data(G_OBJECT(anchor), data_key) != NULL) {
       gint offset = gtk_text_iter_get_offset(&iter);
       g_array_append_val(offsets, offset);
     }
@@ -197,9 +197,9 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
     if (p[0] == '*' && p[1] == '*') {
       const gchar *end = strstr(p + 2, "**");
       if (end && end > p + 2) {
-        gint match_start = (p - line_text) + line_offset;
+        gint match_start = g_utf8_pointer_to_offset(line_text, p) + line_offset;
         gint content_start = match_start + 2;
-        gint content_end = (end - line_text) + line_offset;
+        gint content_end = g_utf8_pointer_to_offset(line_text, end) + line_offset;
 
         apply_tag_hide_syntax(buffer, TAG_BOLD, content_start, content_end,
                               match_start, 2, content_end, 2);
@@ -213,9 +213,9 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
     if (p[0] == '*' && p[1] != '*') {
       const gchar *end = strchr(p + 1, '*');
       if (end && end > p + 1 && *(end + 1) != '*') {
-        gint match_start = (p - line_text) + line_offset;
+        gint match_start = g_utf8_pointer_to_offset(line_text, p) + line_offset;
         gint content_start = match_start + 1;
-        gint content_end = (end - line_text) + line_offset;
+        gint content_end = g_utf8_pointer_to_offset(line_text, end) + line_offset;
 
         apply_tag_hide_syntax(buffer, TAG_ITALIC, content_start, content_end,
                               match_start, 1, content_end, 1);
@@ -229,9 +229,9 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
     if (p[0] == '`' && p[1] != '`') {
       const gchar *end = strchr(p + 1, '`');
       if (end && end > p + 1) {
-        gint match_start = (p - line_text) + line_offset;
+        gint match_start = g_utf8_pointer_to_offset(line_text, p) + line_offset;
         gint content_start = match_start + 1;
-        gint content_end = (end - line_text) + line_offset;
+        gint content_end = g_utf8_pointer_to_offset(line_text, end) + line_offset;
 
         apply_tag_hide_syntax(buffer, TAG_CODE, content_start, content_end,
                               match_start, 1, content_end, 1);
@@ -247,10 +247,12 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
       if (bracket_end && bracket_end[1] == '(') {
         const gchar *paren_end = strchr(bracket_end + 2, ')');
         if (paren_end) {
-          gint link_start = (p - line_text) + line_offset;
+          gint link_start = g_utf8_pointer_to_offset(line_text, p) + line_offset;
           gint text_start = link_start + 1;
-          gint text_end = (bracket_end - line_text) + line_offset;
-          gint url_end = (paren_end - line_text) + line_offset;
+          gint text_end =
+              g_utf8_pointer_to_offset(line_text, bracket_end) + line_offset;
+          gint url_end =
+              g_utf8_pointer_to_offset(line_text, paren_end) + line_offset;
 
           GtkTextIter start, end;
 
@@ -295,11 +297,16 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
       if (g_match_info_fetch_pos(url_match, 1, &mstart, &mend)) {
         /* Trim common trailing punctuation */
         while (mend > mstart) {
-          char c = line_text[mend - 1];
+          const gchar *prev =
+              g_utf8_find_prev_char(line_text, line_text + mend);
+          if (!prev) {
+            break;
+          }
+          gunichar c = g_utf8_get_char(prev);
           if (c == '.' || c == ',' || c == ';' || c == ':' || c == '!' ||
               c == '?' || c == ')' || c == ']' || c == '}' || c == '"' ||
               c == '\'') {
-            mend--;
+            mend = (gint)(prev - line_text);
             continue;
           }
           break;
@@ -307,8 +314,10 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
 
         if (mend > mstart) {
           GtkTextIter s, e;
-          gtk_text_buffer_get_iter_at_offset(buffer, &s, line_offset + mstart);
-          gtk_text_buffer_get_iter_at_offset(buffer, &e, line_offset + mend);
+          gint cstart = g_utf8_pointer_to_offset(line_text, line_text + mstart);
+          gint cend = g_utf8_pointer_to_offset(line_text, line_text + mend);
+          gtk_text_buffer_get_iter_at_offset(buffer, &s, line_offset + cstart);
+          gtk_text_buffer_get_iter_at_offset(buffer, &e, line_offset + cend);
           gtk_text_buffer_apply_tag_by_name(buffer, TAG_LINK, &s, &e);
         }
       }
@@ -337,7 +346,7 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
    * while iterating. Do all buffer mutations using collected offsets.
    */
   old_anchor_offsets = g_array_new(FALSE, FALSE, sizeof(gint));
-  collect_hrule_anchor_offsets(buffer, old_anchor_offsets);
+  collect_anchor_offsets(buffer, TRAYMD_HRULE_ANCHOR_DATA, old_anchor_offsets);
   delete_char_offsets(buffer, old_anchor_offsets);
   g_array_free(old_anchor_offsets, TRUE);
 
@@ -387,15 +396,17 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     }
     /* List item - style the bullet, hide and replace with bullet character */
     else if (line_starts_with(line_text, "- ") ||
-             line_starts_with(line_text, "* ")) {
+             line_starts_with(line_text, "* ") ||
+             line_starts_with(line_text, "• ")) {
       /* Apply list style to bullet */
       gtk_text_buffer_get_iter_at_offset(buffer, &syntax_end, line_offset + 1);
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_LIST_BULLET, &line_start,
                                         &syntax_end);
+
       /* Apply list style to whole line */
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_LIST, &line_start,
                                         &line_end);
-      /* Apply inline tags to content after "- " */
+      /* Apply inline tags to content after marker */
       GtkTextIter content_start;
       gtk_text_buffer_get_iter_at_offset(buffer, &content_start,
                                          line_offset + 2);

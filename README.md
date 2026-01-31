@@ -1,6 +1,6 @@
 # TrayMD
 
-A lightweight GTK 3 markdown notes application for Linux system trays.
+A lightweight GTK 3 notes application for Linux system trays, supporting live editing of markdown syntax.
 
 ![TrayMD](assets/screenshot.png)
 
@@ -11,7 +11,7 @@ A lightweight GTK 3 markdown notes application for Linux system trays.
 - **Auto-save** - Notes are saved automatically (500ms after last keystroke)
 - **Minimal UI** - Clean toolbar with new note and navigation buttons
 - **Lightweight** - Pure C, no web technologies, fast startup
-- **Hyperlink support** - ctrl left click links to open them
+- **Hyperlink support** - 'ctrl left click' links to open them
 
 ## Supported Markdown
 
