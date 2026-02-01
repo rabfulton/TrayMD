@@ -151,6 +151,19 @@ gboolean notes_save(const gchar *path, const gchar *content) {
   return TRUE;
 }
 
+gboolean notes_delete(const gchar *path) {
+  if (!path) {
+    return FALSE;
+  }
+
+  if (g_remove(path) != 0) {
+    g_printerr("Failed to delete note '%s': %s\n", path, g_strerror(errno));
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
 gint notes_count(void) {
   GPtrArray *paths = notes_list();
   gint count = paths->len;

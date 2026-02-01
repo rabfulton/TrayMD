@@ -45,6 +45,7 @@ void markyd_app_goto_note(MarkydApp *app, gint index);
 void markyd_app_next_note(MarkydApp *app);
 void markyd_app_prev_note(MarkydApp *app);
 void markyd_app_new_note(MarkydApp *app);
+gboolean markyd_app_delete_current_note(MarkydApp *app);
 
 /* Auto-save */
 void markyd_app_schedule_save(MarkydApp *app);

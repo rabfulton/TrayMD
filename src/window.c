@@ -4,6 +4,7 @@
 #include "editor.h"
 
 static void on_new_clicked(GtkButton *button, gpointer user_data);
+static void on_delete_clicked(GtkButton *button, gpointer user_data);
 static void on_prev_clicked(GtkButton *button, gpointer user_data);
 static void on_next_clicked(GtkButton *button, gpointer user_data);
 static gboolean on_delete_event(GtkWidget *widget, GdkEvent *event,
@@ -57,8 +58,13 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   /* Create header bar */
   self->header_bar = gtk_header_bar_new();
   gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(self->header_bar), TRUE);
-  gtk_header_bar_set_title(GTK_HEADER_BAR(self->header_bar), "TrayMD");
   gtk_window_set_titlebar(GTK_WINDOW(self->window), self->header_bar);
+
+  /* Note counter label (center) */
+  self->lbl_counter = gtk_label_new("0 / 0");
+  gtk_widget_set_halign(self->lbl_counter, GTK_ALIGN_CENTER);
+  gtk_header_bar_set_custom_title(GTK_HEADER_BAR(self->header_bar),
+                                  self->lbl_counter);
 
   /* New note button */
   self->btn_new = gtk_button_new_from_icon_name("document-new-symbolic",
@@ -66,6 +72,14 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   gtk_widget_set_tooltip_text(self->btn_new, "New Note");
   g_signal_connect(self->btn_new, "clicked", G_CALLBACK(on_new_clicked), self);
   gtk_header_bar_pack_start(GTK_HEADER_BAR(self->header_bar), self->btn_new);
+
+  /* Delete note button (next to New) */
+  self->btn_delete =
+      gtk_button_new_from_icon_name("user-trash-symbolic", GTK_ICON_SIZE_BUTTON);
+  gtk_widget_set_tooltip_text(self->btn_delete, "Delete Note");
+  g_signal_connect(self->btn_delete, "clicked", G_CALLBACK(on_delete_clicked),
+                   self);
+  gtk_header_bar_pack_start(GTK_HEADER_BAR(self->header_bar), self->btn_delete);
 
   /* Navigation box */
   nav_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -86,10 +100,6 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   gtk_box_pack_start(GTK_BOX(nav_box), self->btn_next, FALSE, FALSE, 0);
 
   gtk_header_bar_pack_start(GTK_HEADER_BAR(self->header_bar), nav_box);
-
-  /* Note counter label */
-  self->lbl_counter = gtk_label_new("0 / 0");
-  gtk_header_bar_pack_end(GTK_HEADER_BAR(self->header_bar), self->lbl_counter);
 
   /* Scrolled window for editor - no extra margins */
   self->scroll = gtk_scrolled_window_new(NULL, NULL);
@@ -239,6 +249,49 @@ static void on_new_clicked(GtkButton *button, gpointer user_data) {
   MarkydWindow *self = (MarkydWindow *)user_data;
   (void)button;
   markyd_app_new_note(self->app);
+}
+
+static void on_delete_clicked(GtkButton *button, gpointer user_data) {
+  MarkydWindow *self = (MarkydWindow *)user_data;
+  gint count = markyd_app_get_note_count(self->app);
+  GtkWidget *dialog;
+  gint response;
+
+  (void)button;
+
+  if (count <= 0) {
+    return;
+  }
+
+  if (count == 1) {
+    dialog = gtk_message_dialog_new(
+        GTK_WINDOW(self->window), GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_QUESTION, GTK_BUTTONS_NONE, "Clear this note?");
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog),
+        "This will remove all text from the current note.");
+    gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Cancel", GTK_RESPONSE_CANCEL,
+                           "_Clear", GTK_RESPONSE_OK, NULL);
+  } else {
+    dialog = gtk_message_dialog_new(
+        GTK_WINDOW(self->window), GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "Delete this note?");
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog),
+        "This will permanently delete the current note file.");
+    gtk_dialog_add_buttons(GTK_DIALOG(dialog), "_Cancel", GTK_RESPONSE_CANCEL,
+                           "_Delete", GTK_RESPONSE_OK, NULL);
+  }
+
+  gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
+  response = gtk_dialog_run(GTK_DIALOG(dialog));
+  gtk_widget_destroy(dialog);
+
+  if (response == GTK_RESPONSE_OK) {
+    if (!markyd_app_delete_current_note(self->app)) {
+      g_printerr("Failed to delete/clear current note\n");
+    }
+  }
 }
 
 static void on_prev_clicked(GtkButton *button, gpointer user_data) {

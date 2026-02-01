@@ -10,6 +10,7 @@ typedef struct _MarkydWindow {
   GtkWidget *window;
   GtkWidget *header_bar;
   GtkWidget *btn_new;
+  GtkWidget *btn_delete;
   GtkWidget *btn_prev;
   GtkWidget *btn_next;
   GtkWidget *lbl_counter;

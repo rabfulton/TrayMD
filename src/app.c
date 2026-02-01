@@ -206,6 +206,56 @@ void markyd_app_new_note(MarkydApp *self) {
   markyd_window_update_nav_sensitivity(self->window);
 }
 
+gboolean markyd_app_delete_current_note(MarkydApp *self) {
+  gint count;
+  gint old_index;
+  gchar *path;
+
+  if (!self || self->current_index < 0 ||
+      (guint)self->current_index >= self->note_paths->len) {
+    return FALSE;
+  }
+
+  count = (gint)self->note_paths->len;
+  old_index = self->current_index;
+
+  /* If there's only one note, "delete" means clear its contents. */
+  if (count <= 1) {
+    markyd_editor_set_content(self->editor, "");
+    self->modified = TRUE;
+    markyd_app_schedule_save(self);
+    markyd_window_update_counter(self->window);
+    markyd_window_update_nav_sensitivity(self->window);
+    return TRUE;
+  }
+
+  /* Save current note first */
+  markyd_app_save_current(self);
+
+  path = g_strdup(g_ptr_array_index(self->note_paths, self->current_index));
+  if (!notes_delete(path)) {
+    g_free(path);
+    return FALSE;
+  }
+  g_free(path);
+
+  /* Refresh list and show an existing note */
+  markyd_app_refresh_notes(self);
+
+  if (self->note_paths->len == 0) {
+    /* Shouldn't happen, but keep the app usable. */
+    markyd_app_new_note(self);
+    return TRUE;
+  }
+
+  if (old_index >= (gint)self->note_paths->len) {
+    old_index = (gint)self->note_paths->len - 1;
+  }
+  markyd_app_goto_note(self, old_index);
+
+  return TRUE;
+}
+
 void markyd_app_schedule_save(MarkydApp *self) {
   self->modified = TRUE;
 
