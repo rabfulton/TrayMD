@@ -101,12 +101,13 @@ jobs:
             -bb "$TOPDIR/SPECS/traymd.spec"
 
           mkdir -p dist/rpm
-          find "$TOPDIR/RPMS" -type f -name '*.rpm' -exec cp -v -t dist/rpm {} +
+          # Only publish the main runtime RPM (exclude -debuginfo/-debugsource).
+          find "$TOPDIR/RPMS" -type f -name 'traymd-[0-9]*.rpm' -exec cp -v -t dist/rpm {} +
 
       - uses: actions/upload-artifact@v4
         with:
           name: traymd-rpm
-          path: dist/rpm/*.rpm
+          path: dist/rpm/traymd-[0-9]*.rpm
 
   release-assets:
     runs-on: ubuntu-latest
@@ -125,4 +126,4 @@ jobs:
         with:
           files: |
             dist/*.deb
-            dist/*.rpm
+            dist/traymd-[0-9]*.rpm
