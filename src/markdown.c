@@ -461,10 +461,8 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
         apply_inline_tags(buffer, &line_start, &line_end);
       }
     }
-    /* Horizontal rule */
-    else if (is_hrule_line(line_text)) {
-      gtk_text_buffer_apply_tag_by_name(buffer, TAG_HRULE, &line_start,
-                                        &line_end);
+  /* Horizontal rule */
+  else if (is_hrule_line(line_text)) {
       /* Hide the markdown syntax, but leave it editable. */
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
                                         &line_end);
@@ -497,6 +495,13 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
       anchor = gtk_text_buffer_create_child_anchor(buffer, &anchor_pos);
       g_object_set_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA,
                         GINT_TO_POINTER(1));
+
+      /* Hide the anchor's object character so it doesn't show up/capture layout. */
+      GtkTextIter astart = anchor_pos;
+      GtkTextIter aend = anchor_pos;
+      if (gtk_text_iter_forward_char(&aend)) {
+        gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &astart, &aend);
+      }
     }
   }
 
