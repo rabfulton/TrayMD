@@ -2,9 +2,8 @@ name: Package
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published, prereleased, released]
 
 jobs:
   deb:
@@ -24,7 +23,8 @@ jobs:
 
       - name: Build .deb
         run: |
-          VERSION="$(cat VERSION)"
+          TAG="${{ github.event.release.tag_name || github.ref_name }}"
+          VERSION="${TAG#v}"
           ARCH="$(dpkg --print-architecture)"
           MAINTAINER="${GITHUB_REPOSITORY_OWNER} <noreply@github.com>"
 
@@ -59,16 +59,23 @@ jobs:
             pkgconf-pkg-config
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mark workspace as safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Build source tarball
         run: |
-          VERSION="$(cat VERSION)"
+          TAG="${{ github.event.release.tag_name || github.ref_name }}"
+          VERSION="${TAG#v}"
           mkdir -p dist
           git archive --format=tar.gz --prefix="traymd-${VERSION}/" -o "dist/traymd-${VERSION}.tar.gz" HEAD
 
       - name: Build .rpm
         run: |
-          VERSION="$(cat VERSION)"
+          TAG="${{ github.event.release.tag_name || github.ref_name }}"
+          VERSION="${TAG#v}"
           URL="https://github.com/${GITHUB_REPOSITORY}"
 
           TOPDIR="$PWD/dist/rpmbuild"

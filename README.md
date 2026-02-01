@@ -28,44 +28,11 @@ A lightweight GTK 3 notes application for Linux system trays, supporting live ed
 | `[text](url)` | Link |
 | `---` | Horizontal rule |
 
-## Dependencies
-
-### Arch Linux
-```bash
-sudo pacman -S gtk3 libayatana-appindicator
-```
-
-### Ubuntu/Debian
-```bash
-sudo apt install libgtk-3-dev libayatana-appindicator3-dev
-```
-
-### Fedora
-```bash
-sudo dnf install gtk3-devel libayatana-appindicator-gtk3-devel
-```
-
-## Building
-
-```bash
-make
-```
-
 ## Installation
 
 ### Arch Linux (AUR)
 
 - https://aur.archlinux.org/packages/traymd
-
-### From Source
-
-```bash
-sudo make install
-```
-
-This installs:
-- Binary to `/usr/local/bin/traymd`
-- Desktop file to `/usr/local/share/applications/traymd.desktop`
 
 ### Debian/Ubuntu (.deb)
 
@@ -85,12 +52,6 @@ builds) and install it with:
 sudo dnf install ./traymd-*.rpm
 ```
 
-## Uninstallation
-
-```bash
-sudo make uninstall
-```
-
 ## Usage
 
 Run `traymd` to start the application. It will appear in your system tray.
@@ -108,6 +69,39 @@ AppIndicator-based trays), you can switch tray backends:
 Notes are stored in `~/.local/share/traymd/notes/` as plain markdown files (and
 your existing `markyd` data is migrated automatically on startup).
 
+
+## Building From Source
+
+```bash
+make
+sudo make install
+```
+
+This installs:
+- Binary to `/usr/local/bin/traymd`
+- Desktop file to `/usr/local/share/applications/traymd.desktop`
+
+### Uninstallation
+
+```bash
+sudo make uninstall
+```
+### Dependencies
+
+### Arch Linux
+```bash
+sudo pacman -S gtk3 libayatana-appindicator
+```
+
+### Ubuntu/Debian
+```bash
+sudo apt install libgtk-3-dev libayatana-appindicator3-dev
+```
+
+### Fedora
+```bash
+sudo dnf install gtk3-devel libayatana-appindicator-gtk3-devel
+```
 ## License
 
 MIT License
