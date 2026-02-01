@@ -15,6 +15,21 @@ typedef struct _MarkydEditor {
 
   /* Coalesce markdown re-rendering to idle to avoid invalidating GTK iterators. */
   guint markdown_idle_id;
+
+  /* "Undo last paste" support (single-level) */
+  gboolean in_paste;
+  gboolean in_undo;
+  gboolean pending_paste_finalize;
+  gint paste_start_offset;
+  gint paste_end_offset_before;
+  gchar *paste_replaced_text;
+  gchar *paste_clipboard_text;
+  GtkTextMark *paste_inserted_start;
+  GtkTextMark *paste_inserted_end;
+  gboolean paste_valid;
+  gboolean paste_had_selection;
+  gint paste_sel_start_offset;
+  gint paste_sel_end_offset;
 } MarkydEditor;
 
 /* Lifecycle */

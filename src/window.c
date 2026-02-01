@@ -15,6 +15,11 @@ static gboolean on_window_state_event(GtkWidget *widget,
                                       GdkEventWindowState *event,
                                       gpointer user_data);
 
+static gboolean geometry_debug_enabled(void) {
+  const gchar *v = g_getenv("TRAYMD_DEBUG_GEOMETRY");
+  return v && v[0] != '\0' && g_strcmp0(v, "0") != 0;
+}
+
 MarkydWindow *markyd_window_new(MarkydApp *app) {
   MarkydWindow *self = g_new0(MarkydWindow, 1);
   GtkWidget *nav_box;
@@ -38,6 +43,12 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   if (config->window_x >= 0 && config->window_y >= 0) {
     gtk_window_move(GTK_WINDOW(self->window), config->window_x,
                     config->window_y);
+  }
+
+  if (geometry_debug_enabled()) {
+    g_printerr("TrayMD geometry init: x=%d y=%d w=%d h=%d maximized=%d\n",
+               config->window_x, config->window_y, config->window_width,
+               config->window_height, config->window_maximized);
   }
 
   /* Restore maximized state */
@@ -344,11 +355,48 @@ static gboolean on_configure_event(GtkWidget *widget, GdkEventConfigure *event,
 
   {
     gint x, y;
+    gint width, height;
+    gint gtk_w = 0, gtk_h = 0;
+    GdkRectangle frame_extents;
+    gboolean have_extents = FALSE;
+
     gtk_window_get_position(GTK_WINDOW(widget), &x, &y);
     config->window_x = x;
     config->window_y = y;
-    config->window_width = event->width;
-    config->window_height = event->height;
+
+    /*
+     * Persist the size in the same coordinate system GTK expects when we call
+     * gtk_window_set_default_size(). Using configure-event width/height can
+     * cause a feedback loop where the restored size grows every launch on some
+     * WMs/CSD setups.
+     */
+    gtk_window_get_size(GTK_WINDOW(widget), &gtk_w, &gtk_h);
+
+    width = gtk_w > 0 ? gtk_w : event->width;
+    height = gtk_h > 0 ? gtk_h : event->height;
+
+    if (gdk_window) {
+      gdk_window_get_frame_extents(gdk_window, &frame_extents);
+      have_extents = TRUE;
+    }
+
+    config->window_width = width;
+    config->window_height = height;
+
+    if (geometry_debug_enabled()) {
+      if (have_extents) {
+        g_printerr(
+            "TrayMD configure: event=%dx%d gtk=%dx%d saved=%dx%d frame=%dx%d at (%d,%d)\n",
+            event->width, event->height, gtk_w, gtk_h, width, height,
+            frame_extents.width, frame_extents.height, x, y);
+      } else {
+        g_printerr("TrayMD configure: event=%dx%d gtk=%dx%d saved=%dx%d at (%d,%d)\n",
+                   event->width, event->height, gtk_w, gtk_h, width, height, x,
+                   y);
+      }
+      g_printerr("TrayMD saved: x=%d y=%d w=%d h=%d\n", config->window_x,
+                 config->window_y, config->window_width, config->window_height);
+    }
   }
 
   return FALSE;

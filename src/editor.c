@@ -12,10 +12,14 @@ static void on_text_view_size_allocate(GtkWidget *widget,
                                        gpointer user_data);
 static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event,
                                   gpointer user_data);
+static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event,
+                                gpointer user_data);
 static gboolean on_motion_notify(GtkWidget *widget, GdkEventMotion *event,
                                  gpointer user_data);
 static gboolean on_leave_notify(GtkWidget *widget, GdkEventCrossing *event,
                                 gpointer user_data);
+static void on_paste_clipboard(GtkTextView *text_view, gpointer user_data);
+static void on_paste_clipboard_after(GtkTextView *text_view, gpointer user_data);
 static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
@@ -106,6 +110,25 @@ static gboolean hr_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
 
 static const gint HR_WIDGET_HEIGHT_PX = 22;
 static const gchar *HR_WIDGET_DATA_KEY = "traymd-hr-widget";
+
+static void clear_last_paste(MarkydEditor *self) {
+  if (!self) {
+    return;
+  }
+
+  if (self->paste_inserted_start) {
+    gtk_text_buffer_delete_mark(self->buffer, self->paste_inserted_start);
+    self->paste_inserted_start = NULL;
+  }
+  if (self->paste_inserted_end) {
+    gtk_text_buffer_delete_mark(self->buffer, self->paste_inserted_end);
+    self->paste_inserted_end = NULL;
+  }
+
+  g_clear_pointer(&self->paste_replaced_text, g_free);
+  g_clear_pointer(&self->paste_clipboard_text, g_free);
+  self->paste_valid = FALSE;
+}
 
 static void normalize_list_markers(MarkydEditor *self) {
   GtkTextIter line_start, end;
@@ -312,6 +335,19 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
   self->app = app;
   self->updating_tags = FALSE;
   self->markdown_idle_id = 0;
+  self->in_paste = FALSE;
+  self->in_undo = FALSE;
+  self->pending_paste_finalize = FALSE;
+  self->paste_start_offset = 0;
+  self->paste_end_offset_before = 0;
+  self->paste_replaced_text = NULL;
+  self->paste_clipboard_text = NULL;
+  self->paste_inserted_start = NULL;
+  self->paste_inserted_end = NULL;
+  self->paste_valid = FALSE;
+  self->paste_had_selection = FALSE;
+  self->paste_sel_start_offset = 0;
+  self->paste_sel_end_offset = 0;
 
   /* Create text view */
   self->text_view = gtk_text_view_new();
@@ -340,13 +376,22 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
   /* Link hover/click */
   gtk_widget_add_events(self->text_view, GDK_POINTER_MOTION_MASK |
                                             GDK_LEAVE_NOTIFY_MASK |
+                                            GDK_BUTTON_PRESS_MASK |
                                             GDK_BUTTON_RELEASE_MASK);
+  g_signal_connect(self->text_view, "button-press-event",
+                   G_CALLBACK(on_button_press), self);
   g_signal_connect(self->text_view, "button-release-event",
                    G_CALLBACK(on_button_release), self);
   g_signal_connect(self->text_view, "motion-notify-event",
                    G_CALLBACK(on_motion_notify), self);
   g_signal_connect(self->text_view, "leave-notify-event",
                    G_CALLBACK(on_leave_notify), self);
+
+  /* Track pastes so we can undo the last one with Ctrl+Z */
+  g_signal_connect(self->text_view, "paste-clipboard",
+                   G_CALLBACK(on_paste_clipboard), self);
+  g_signal_connect_after(self->text_view, "paste-clipboard",
+                         G_CALLBACK(on_paste_clipboard_after), self);
 
   return self;
 }
@@ -358,6 +403,7 @@ void markyd_editor_free(MarkydEditor *self) {
     g_source_remove(self->markdown_idle_id);
     self->markdown_idle_id = 0;
   }
+  clear_last_paste(self);
   g_free(self);
 }
 
@@ -498,6 +544,106 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
 
   (void)widget;
 
+  /* Ctrl+V: tracked paste so Ctrl+Z can undo it (single level). */
+  if ((event->state & GDK_CONTROL_MASK) &&
+      (event->keyval == GDK_KEY_v || event->keyval == GDK_KEY_V)) {
+    GtkClipboard *cb = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    gchar *clip = gtk_clipboard_wait_for_text(cb);
+    GtkTextIter sel_start, sel_end;
+    gboolean had_selection =
+        gtk_text_buffer_get_selection_bounds(buffer, &sel_start, &sel_end);
+
+    if (!clip) {
+      return FALSE;
+    }
+
+    self->in_paste = TRUE;
+    clear_last_paste(self);
+
+    self->paste_had_selection = had_selection;
+    if (had_selection) {
+      self->paste_sel_start_offset = gtk_text_iter_get_offset(&sel_start);
+      self->paste_sel_end_offset = gtk_text_iter_get_offset(&sel_end);
+      self->paste_replaced_text =
+          gtk_text_buffer_get_text(buffer, &sel_start, &sel_end, TRUE);
+    } else {
+      gtk_text_buffer_get_iter_at_mark(buffer, &cursor,
+                                       gtk_text_buffer_get_insert(buffer));
+      self->paste_sel_start_offset = gtk_text_iter_get_offset(&cursor);
+      self->paste_sel_end_offset = self->paste_sel_start_offset;
+      self->paste_replaced_text = g_strdup("");
+      sel_start = cursor;
+      sel_end = cursor;
+    }
+
+    /* Mark start of insertion, then delete selection and insert clipboard text. */
+    self->paste_inserted_start =
+        gtk_text_buffer_create_mark(buffer, NULL, &sel_start, TRUE);
+
+    if (had_selection) {
+      gtk_text_buffer_delete(buffer, &sel_start, &sel_end);
+      gtk_text_buffer_get_iter_at_mark(buffer, &sel_start,
+                                       self->paste_inserted_start);
+    }
+
+    gtk_text_buffer_insert(buffer, &sel_start, clip, -1);
+    self->paste_inserted_end =
+        gtk_text_buffer_create_mark(buffer, NULL, &sel_start, FALSE);
+
+    gtk_text_buffer_place_cursor(buffer, &sel_start);
+
+    self->paste_clipboard_text = clip; /* keep for debug/inspection */
+    self->paste_valid = TRUE;
+    self->in_paste = FALSE;
+
+    schedule_markdown_apply(self);
+    return TRUE;
+  }
+
+  /* Ctrl+Z: undo last paste (single level) */
+  if ((event->state & GDK_CONTROL_MASK) &&
+      (event->keyval == GDK_KEY_z || event->keyval == GDK_KEY_Z)) {
+    if (self->paste_valid && self->paste_inserted_start &&
+        self->paste_inserted_end) {
+      GtkTextIter start, end;
+      GtkTextIter restore_start;
+
+      self->in_undo = TRUE;
+      self->updating_tags = TRUE;
+
+      gtk_text_buffer_get_iter_at_mark(buffer, &start, self->paste_inserted_start);
+      gtk_text_buffer_get_iter_at_mark(buffer, &end, self->paste_inserted_end);
+      restore_start = start;
+
+      gtk_text_buffer_delete(buffer, &start, &end);
+
+      if (self->paste_replaced_text && self->paste_replaced_text[0] != '\0') {
+        gtk_text_buffer_insert(buffer, &restore_start, self->paste_replaced_text,
+                               -1);
+      }
+
+      /* Restore selection/cursor */
+      if (self->paste_had_selection) {
+        GtkTextIter sel_a, sel_b;
+        gtk_text_buffer_get_iter_at_offset(buffer, &sel_a,
+                                           self->paste_sel_start_offset);
+        gtk_text_buffer_get_iter_at_offset(buffer, &sel_b,
+                                           self->paste_sel_end_offset);
+        gtk_text_buffer_select_range(buffer, &sel_a, &sel_b);
+      } else {
+        gtk_text_buffer_place_cursor(buffer, &restore_start);
+      }
+
+      self->updating_tags = FALSE;
+      self->in_undo = FALSE;
+
+      clear_last_paste(self);
+      schedule_markdown_apply(self);
+      return TRUE;
+    }
+    return FALSE;
+  }
+
   /* Only handle Return/Enter key */
   if (event->keyval != GDK_KEY_Return && event->keyval != GDK_KEY_KP_Enter) {
     return FALSE;
@@ -579,11 +725,85 @@ static void on_buffer_changed(GtkTextBuffer *buffer, gpointer user_data) {
     return;
   }
 
+  /* Any edit after a paste invalidates our one-level "undo paste". */
+  if (self->paste_valid && !self->in_paste && !self->in_undo &&
+      !self->pending_paste_finalize) {
+    clear_last_paste(self);
+  }
+
   /* Schedule auto-save */
   markyd_app_schedule_save(self->app);
 
   /* Apply markdown tags (deferred to avoid invalidating GTK iterators). */
   schedule_markdown_apply(self);
+}
+
+static void on_paste_clipboard(GtkTextView *text_view, gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  GtkTextBuffer *buffer = self->buffer;
+  GtkTextIter sel_start, sel_end;
+  GtkTextIter insert_iter;
+
+  (void)text_view;
+
+  self->in_paste = TRUE;
+  clear_last_paste(self);
+
+  self->paste_had_selection =
+      gtk_text_buffer_get_selection_bounds(buffer, &sel_start, &sel_end);
+  if (self->paste_had_selection) {
+    self->paste_sel_start_offset = gtk_text_iter_get_offset(&sel_start);
+    self->paste_sel_end_offset = gtk_text_iter_get_offset(&sel_end);
+    self->paste_start_offset = self->paste_sel_start_offset;
+    self->paste_end_offset_before = self->paste_sel_end_offset;
+    self->paste_replaced_text =
+        gtk_text_buffer_get_text(buffer, &sel_start, &sel_end, TRUE);
+  } else {
+    gtk_text_buffer_get_iter_at_mark(buffer, &insert_iter,
+                                     gtk_text_buffer_get_insert(buffer));
+    self->paste_start_offset = gtk_text_iter_get_offset(&insert_iter);
+    self->paste_end_offset_before = self->paste_start_offset;
+    self->paste_replaced_text = g_strdup("");
+    self->paste_sel_start_offset = self->paste_start_offset;
+    self->paste_sel_end_offset = self->paste_start_offset;
+  }
+
+  GtkClipboard *cb = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  self->paste_clipboard_text = gtk_clipboard_wait_for_text(cb);
+  self->pending_paste_finalize = TRUE;
+}
+
+static void on_paste_clipboard_after(GtkTextView *text_view, gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  GtkTextBuffer *buffer = self->buffer;
+  gint inserted_chars;
+  GtkTextIter start_iter, end_iter;
+
+  (void)text_view;
+
+  if (!self->pending_paste_finalize) {
+    self->in_paste = FALSE;
+    return;
+  }
+  self->pending_paste_finalize = FALSE;
+
+  if (!self->paste_clipboard_text) {
+    self->in_paste = FALSE;
+    return;
+  }
+
+  inserted_chars = g_utf8_strlen(self->paste_clipboard_text, -1);
+  gtk_text_buffer_get_iter_at_offset(buffer, &start_iter, self->paste_start_offset);
+  gtk_text_buffer_get_iter_at_offset(buffer, &end_iter,
+                                     self->paste_start_offset + inserted_chars);
+
+  self->paste_inserted_start =
+      gtk_text_buffer_create_mark(buffer, NULL, &start_iter, TRUE);
+  self->paste_inserted_end =
+      gtk_text_buffer_create_mark(buffer, NULL, &end_iter, FALSE);
+
+  self->paste_valid = TRUE;
+  self->in_paste = FALSE;
 }
 
 static void on_text_view_size_allocate(GtkWidget *widget,
@@ -655,6 +875,61 @@ static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event,
   }
 
   g_free(url);
+  return TRUE;
+}
+
+static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event,
+                                gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+  GtkTextBuffer *buffer = self->buffer;
+  GtkTextIter iter;
+  gint bx, by;
+
+  /* Middle click paste (PRIMARY selection) with undo-paste support. */
+  if (event->button != 2) {
+    return FALSE;
+  }
+  if (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK)) {
+    return FALSE;
+  }
+
+  GtkClipboard *cb = gtk_clipboard_get(GDK_SELECTION_PRIMARY);
+  gchar *clip = gtk_clipboard_wait_for_text(cb);
+  if (!clip) {
+    return FALSE; /* fall back to default behavior */
+  }
+
+  gtk_text_view_window_to_buffer_coords(GTK_TEXT_VIEW(widget),
+                                        GTK_TEXT_WINDOW_TEXT, (gint)event->x,
+                                        (gint)event->y, &bx, &by);
+  gtk_text_view_get_iter_at_location(GTK_TEXT_VIEW(widget), &iter, bx, by);
+
+  self->in_paste = TRUE;
+  clear_last_paste(self);
+
+  /* Middle-click paste typically inserts at pointer; don't replace selection. */
+  self->paste_had_selection = FALSE;
+  self->paste_replaced_text = g_strdup("");
+
+  gtk_text_buffer_place_cursor(buffer, &iter);
+  self->paste_sel_start_offset = gtk_text_iter_get_offset(&iter);
+  self->paste_sel_end_offset = self->paste_sel_start_offset;
+
+  self->paste_inserted_start =
+      gtk_text_buffer_create_mark(buffer, NULL, &iter, TRUE);
+
+  gtk_text_buffer_insert(buffer, &iter, clip, -1);
+  self->paste_inserted_end =
+      gtk_text_buffer_create_mark(buffer, NULL, &iter, FALSE);
+
+  gtk_text_buffer_place_cursor(buffer, &iter);
+
+  g_free(self->paste_clipboard_text);
+  self->paste_clipboard_text = clip;
+  self->paste_valid = TRUE;
+  self->in_paste = FALSE;
+
+  schedule_markdown_apply(self);
   return TRUE;
 }
 
