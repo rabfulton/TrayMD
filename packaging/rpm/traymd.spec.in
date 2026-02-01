@@ -34,3 +34,5 @@ make install DESTDIR=%{buildroot} PREFIX=%{_prefix}
 %{_datadir}/applications/traymd.desktop
 
 %changelog
+* Thu Jan 01 1970 TrayMD Packager <noreply@example.com> - @VERSION@-1
+- Initial package

@@ -98,7 +98,7 @@ jobs:
             -bb "$TOPDIR/SPECS/traymd.spec"
 
           mkdir -p dist/rpm
-          find "$TOPDIR/RPMS" -name '*.rpm' -exec cp -v {} dist/rpm/ \\;
+          find "$TOPDIR/RPMS" -type f -name '*.rpm' -exec cp -v -t dist/rpm {} +
 
       - uses: actions/upload-artifact@v4
         with:
