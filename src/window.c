@@ -174,10 +174,12 @@ void markyd_window_apply_css(MarkydWindow *self) {
       "  padding: 0px;"
       "  background-color: %s;"
       "  color: %s;"
+      "  caret-color: %s;"
       "}"
       "textview text {"
       "  background-color: %s;"
       "  color: %s;"
+      "  caret-color: %s;"
       "}"
       "textview text selection {"
       "  background-color: %s;"
@@ -189,7 +191,8 @@ void markyd_window_apply_css(MarkydWindow *self) {
       "window {"
       "  background-color: %s;"
       "}",
-      config->font_family, config->font_size, bg, fg, bg, fg, sel_bg, bg, bg);
+      config->font_family, config->font_size, bg, fg, fg, bg, fg, fg, sel_bg, bg,
+      bg);
 
   gtk_css_provider_load_from_data(css, css_str, -1, NULL);
   g_free(css_str);
