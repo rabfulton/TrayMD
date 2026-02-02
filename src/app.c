@@ -197,7 +197,7 @@ void markyd_app_new_note(MarkydApp *self) {
   g_free(path);
 
   /* Clear editor */
-  markyd_editor_set_content(self->editor, "# New Note\n\n");
+  markyd_editor_set_content(self->editor, "");
   self->modified = TRUE;
   markyd_app_schedule_save(self);
 
