@@ -66,8 +66,7 @@ AppIndicator-based trays), you can switch tray backends:
 - `traymd --tray-backend=statusicon` (left-click toggles window)
 - `traymd --tray-backend=appindicator` (menu-first behavior; middle-click toggles)
 
-Notes are stored in `~/.local/share/traymd/notes/` as plain markdown files (and
-your existing `markyd` data is migrated automatically on startup).
+Notes are stored in `~/.local/share/traymd/notes/` as plain markdown files.
 
 
 ## Building From Source
