@@ -21,8 +21,14 @@ MarkydApp *markyd_app_new(void) {
   config = config_new();
   config_load(config);
 
-  self->gtk_app =
-      gtk_application_new("org.traymd.app", G_APPLICATION_DEFAULT_FLAGS);
+  GApplicationFlags flags =
+#if GLIB_CHECK_VERSION(2, 74, 0)
+      G_APPLICATION_DEFAULT_FLAGS;
+#else
+      G_APPLICATION_FLAGS_NONE;
+#endif
+
+  self->gtk_app = gtk_application_new("org.traymd.app", flags);
   self->note_paths = g_ptr_array_new_with_free_func(g_free);
   self->current_index = -1;
   self->save_timeout_id = 0;

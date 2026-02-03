@@ -31,6 +31,16 @@ static gint compare_int_desc(gconstpointer a, gconstpointer b) {
   return (ib - ia);
 }
 
+static gchar *gstring_steal_compat(GString *string) {
+  if (!string) {
+    return NULL;
+  }
+
+  gchar *out = g_strdup(string->str);
+  g_string_free(string, TRUE);
+  return out;
+}
+
 static gchar *markdown_to_display_text(const gchar *content) {
   if (!content) {
     return g_strdup("");
@@ -55,7 +65,7 @@ static gchar *markdown_to_display_text(const gchar *content) {
     p = g_utf8_next_char(p);
   }
 
-  return g_string_free(out, FALSE);
+  return gstring_steal_compat(out);
 }
 
 static gchar *display_to_markdown_text(const gchar *content) {
@@ -85,7 +95,7 @@ static gchar *display_to_markdown_text(const gchar *content) {
     p = g_utf8_next_char(p);
   }
 
-  return g_string_free(out, FALSE);
+  return gstring_steal_compat(out);
 }
 
 static gboolean hr_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
@@ -448,7 +458,7 @@ gchar *markyd_editor_get_content(MarkydEditor *self) {
     iter = next;
   }
 
-  raw = g_string_free(out, FALSE);
+  raw = gstring_steal_compat(out);
   converted = display_to_markdown_text(raw);
   g_free(raw);
   return converted;
