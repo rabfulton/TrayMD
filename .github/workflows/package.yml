@@ -10,7 +10,9 @@ on:
 
 jobs:
   deb:
-    runs-on: ubuntu-latest
+    # Pin to the oldest supported Ubuntu to avoid producing a .deb that
+    # accidentally depends on newer GLib/GTK symbols than users have.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +25,14 @@ jobs:
 
       - name: Build
         run: make -j
+
+      - name: ABI check (GLib)
+        run: |
+          set -euo pipefail
+          if nm -D traymd | grep -q ' g_string_free_and_steal$'; then
+            echo "Error: traymd links against g_string_free_and_steal (too-new GLib ABI for jammy/mint 21.x)" >&2
+            exit 1
+          fi
 
       - name: Build .deb
         run: |
