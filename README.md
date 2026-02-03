@@ -110,3 +110,4 @@ MIT License
 - Try my AI panel plugin for XFCE [XFCE Ask](https://github.com/rabfulton/xfce-ask)
 - For a feature complete AI application try out [ChatGTK](https://github.com/rabfulton/ChatGTK)
 - A lightweight speech to text implementation [Auriscribe](https://github.com/rabfulton/Auriscribe)
+- A lightweight local movie database and browser [ReelVault](https://github.com/rabfulton/ReelVault)
