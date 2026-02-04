@@ -28,6 +28,7 @@ void markyd_window_show(MarkydWindow *win);
 void markyd_window_hide(MarkydWindow *win);
 void markyd_window_toggle(MarkydWindow *win);
 gboolean markyd_window_is_visible(MarkydWindow *win);
+void markyd_window_close_to_tray(MarkydWindow *win);
 
 /* UI updates */
 void markyd_window_update_counter(MarkydWindow *win);

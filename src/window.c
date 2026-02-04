@@ -9,6 +9,8 @@ static void on_prev_clicked(GtkButton *button, gpointer user_data);
 static void on_next_clicked(GtkButton *button, gpointer user_data);
 static gboolean on_delete_event(GtkWidget *widget, GdkEvent *event,
                                 gpointer user_data);
+static gboolean on_key_press_event(GtkWidget *widget, GdkEventKey *event,
+                                   gpointer user_data);
 static gboolean on_configure_event(GtkWidget *widget, GdkEventConfigure *event,
                                    gpointer user_data);
 static gboolean on_window_state_event(GtkWidget *widget,
@@ -59,6 +61,8 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   /* Hide instead of destroy on close */
   g_signal_connect(self->window, "delete-event", G_CALLBACK(on_delete_event),
                    self);
+  g_signal_connect(self->window, "key-press-event",
+                   G_CALLBACK(on_key_press_event), self);
 
   /* Track window geometry changes */
   g_signal_connect(self->window, "configure-event",
@@ -241,6 +245,23 @@ gboolean markyd_window_is_visible(MarkydWindow *self) {
   return gtk_widget_get_visible(self->window);
 }
 
+void markyd_window_close_to_tray(MarkydWindow *self) {
+  if (!self) {
+    return;
+  }
+
+  /* Persist latest geometry when the window is closed-to-tray. */
+  if (!config->window_maximized) {
+    gint x, y;
+    gtk_window_get_position(GTK_WINDOW(self->window), &x, &y);
+    config->window_x = x;
+    config->window_y = y;
+  }
+  config_save(config);
+
+  markyd_window_hide(self);
+}
+
 void markyd_window_update_counter(MarkydWindow *self) {
   gchar *text;
   gint count = markyd_app_get_note_count(self->app);
@@ -326,18 +347,22 @@ static gboolean on_delete_event(GtkWidget *widget, GdkEvent *event,
   (void)widget;
   (void)event;
 
-  /* Persist latest geometry when the window is closed-to-tray. */
-  if (!config->window_maximized) {
-    gint x, y;
-    gtk_window_get_position(GTK_WINDOW(self->window), &x, &y);
-    config->window_x = x;
-    config->window_y = y;
-  }
-  config_save(config);
-
   /* Hide instead of destroy */
-  markyd_window_hide(self);
+  markyd_window_close_to_tray(self);
   return TRUE;
+}
+
+static gboolean on_key_press_event(GtkWidget *widget, GdkEventKey *event,
+                                   gpointer user_data) {
+  MarkydWindow *self = (MarkydWindow *)user_data;
+  (void)widget;
+
+  if (event && event->keyval == GDK_KEY_Escape) {
+    markyd_window_close_to_tray(self);
+    return TRUE;
+  }
+
+  return FALSE;
 }
 
 static gboolean on_configure_event(GtkWidget *widget, GdkEventConfigure *event,

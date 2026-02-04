@@ -1,6 +1,7 @@
 #include "editor.h"
 #include "app.h"
 #include "markdown.h"
+#include "window.h"
 #include <ctype.h>
 #include <string.h>
 
@@ -553,6 +554,13 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
   gchar *prefix;
 
   (void)widget;
+
+  if (event && event->keyval == GDK_KEY_Escape) {
+    if (self->app && self->app->window) {
+      markyd_window_close_to_tray(self->app->window);
+      return TRUE;
+    }
+  }
 
   /* Ctrl+V: tracked paste so Ctrl+Z can undo it (single level). */
   if ((event->state & GDK_CONTROL_MASK) &&
