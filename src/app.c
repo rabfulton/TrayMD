@@ -85,6 +85,13 @@ static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
 
   (void)gtk_app; /* Unused */
 
+  /* GtkApplication "activate" can be emitted multiple times (e.g. when the user
+   * launches the app again). Avoid re-initializing the tray/window/note state. */
+  if (self->window) {
+    markyd_window_show(self->window);
+    return;
+  }
+
   /* Initialize notes storage */
   if (!notes_init()) {
     g_printerr("Failed to initialize notes storage\n");
