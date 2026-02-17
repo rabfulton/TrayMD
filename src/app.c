@@ -34,6 +34,7 @@ MarkydApp *markyd_app_new(void) {
   self->save_timeout_id = 0;
   self->modified = FALSE;
   self->tray_backend = MARKYD_TRAY_BACKEND_STATUSICON;
+  self->no_tray = FALSE;
 
   g_signal_connect(self->gtk_app, "activate", G_CALLBACK(on_activate), self);
 
@@ -88,7 +89,11 @@ static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
   /* GtkApplication "activate" can be emitted multiple times (e.g. when the user
    * launches the app again). Avoid re-initializing the tray/window/note state. */
   if (self->window) {
-    markyd_window_show(self->window);
+    if (self->no_tray) {
+      markyd_window_toggle(self->window);
+    } else {
+      markyd_window_show(self->window);
+    }
     return;
   }
 
@@ -102,8 +107,10 @@ static void on_activate(GtkApplication *gtk_app, gpointer user_data) {
   self->window = markyd_window_new(self);
   self->editor = self->window->editor;
 
-  /* Initialize system tray */
-  tray_init(self);
+  /* Initialize system tray (unless disabled by --no-tray) */
+  if (!self->no_tray) {
+    tray_init(self);
+  }
 
   /* Load notes list */
   markyd_app_refresh_notes(self);

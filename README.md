@@ -66,6 +66,7 @@ AppIndicator-based trays), you can switch tray backends:
 
 - `traymd --tray-backend=statusicon` (left-click toggles window)
 - `traymd --tray-backend=appindicator` (menu-first behavior; middle-click toggles)
+- `traymd --no-tray` (disable tray icon; subsequent launches toggle window visibility)
 
 Notes are stored in `~/.local/share/traymd/notes/` as plain markdown files.
 

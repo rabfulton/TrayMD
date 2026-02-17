@@ -29,6 +29,7 @@ typedef struct _MarkydApp {
   /* Startup options */
   gboolean start_minimized; /* Start minimized to tray */
   MarkydTrayBackend tray_backend;
+  gboolean no_tray; /* Disable tray icon/menu integration */
 } MarkydApp;
 
 /* Global app instance */

@@ -6,6 +6,7 @@
 
 static gboolean start_minimized = FALSE;
 static MarkydTrayBackend tray_backend = MARKYD_TRAY_BACKEND_STATUSICON;
+static gboolean no_tray = FALSE;
 
 static gboolean parse_tray_backend(const gchar *value,
                                    MarkydTrayBackend *out) {
@@ -64,6 +65,11 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    if (g_strcmp0(argv[i], "--no-tray") == 0) {
+      no_tray = TRUE;
+      continue;
+    }
+
     if (g_str_has_prefix(argv[i], "--tray-backend=")) {
       const gchar *value = argv[i] + strlen("--tray-backend=");
       MarkydTrayBackend parsed;
@@ -113,6 +119,7 @@ int main(int argc, char **argv) {
   /* Pass the minimized flag to the app */
   application->start_minimized = start_minimized;
   application->tray_backend = tray_backend;
+  application->no_tray = no_tray;
 
   filtered_argc = (int)filtered->len;
   filtered_argv = g_new0(char *, (gsize)filtered_argc + 1);
