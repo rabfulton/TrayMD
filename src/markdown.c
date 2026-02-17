@@ -10,6 +10,7 @@
 #define TAG_BOLD "bold"
 #define TAG_ITALIC "italic"
 #define TAG_CODE "code"
+#define TAG_CODE_BLOCK "code_block"
 #define TAG_QUOTE "quote"
 #define TAG_LIST "list"
 #define TAG_LIST_BULLET "list_bullet"
@@ -87,6 +88,12 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
   gtk_text_buffer_create_tag(buffer, TAG_CODE, "family", "Monospace",
                              "background", "#3E4451", "foreground", "#E06C75",
                              NULL);
+
+  /* Fenced code block */
+  gtk_text_buffer_create_tag(
+      buffer, TAG_CODE_BLOCK, "family", "Monospace", "foreground", "#ABB2BF",
+      "paragraph-background", "#2C313A", "left-margin", 24, "right-margin", 16,
+      NULL);
 
   /* Quote - Indented and styled */
   gtk_text_buffer_create_tag(buffer, TAG_QUOTE, "left-margin", 24, "style",
@@ -178,6 +185,57 @@ static gboolean is_hrule_line(const gchar *line) {
 
   g_free(trimmed);
   return TRUE;
+}
+
+static gboolean is_all_ascii_space(const gchar *s) {
+  while (s && *s) {
+    if (!g_ascii_isspace(*s)) {
+      return FALSE;
+    }
+    s++;
+  }
+  return TRUE;
+}
+
+static gboolean is_code_fence_line(const gchar *line, gboolean in_code_block) {
+  gchar *trimmed;
+  const gchar *p;
+  gint ticks = 0;
+  gboolean result = FALSE;
+
+  if (!line) {
+    return FALSE;
+  }
+
+  trimmed = g_strstrip(g_strdup(line));
+  p = trimmed;
+
+  while (*p == '`') {
+    ticks++;
+    p++;
+  }
+
+  if (ticks >= 3) {
+    if (in_code_block) {
+      /* Closing fence: only optional whitespace after backticks. */
+      result = is_all_ascii_space(p);
+    } else {
+      /* Opening fence: allow info string, but reject inline ```code``` form. */
+      result = (strchr(p, '`') == NULL);
+    }
+  }
+
+  g_free(trimmed);
+  return result;
+}
+
+static void apply_tag_to_line(GtkTextBuffer *buffer, const gchar *tag_name,
+                              const GtkTextIter *line_start,
+                              const GtkTextIter *line_end) {
+  GtkTextIter start = *line_start;
+  GtkTextIter end = *line_end;
+
+  gtk_text_buffer_apply_tag_by_name(buffer, tag_name, &start, &end);
 }
 
 /* Apply tag to range and hide syntax markers */
@@ -372,6 +430,7 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
   gchar *line_text;
   GArray *hrule_offsets;
   GArray *old_anchor_offsets;
+  gboolean in_code_block = FALSE;
 
   /*
    * GtkTextIters become invalid if we mutate the buffer (delete/insert anchors)
@@ -399,8 +458,17 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
 
     line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
 
+    if (is_code_fence_line(line_text, in_code_block)) {
+      gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
+                                        &line_end);
+      in_code_block = !in_code_block;
+    }
+    /* Inside fenced code block: no markdown parsing, style whole line. */
+    else if (in_code_block) {
+      apply_tag_to_line(buffer, TAG_CODE_BLOCK, &line_start, &line_end);
+    }
     /* Headers - hide the # symbols */
-    if (line_starts_with(line_text, "### ")) {
+    else if (line_starts_with(line_text, "### ")) {
       /* Hide "### " */
       gtk_text_buffer_get_iter_at_offset(buffer, &syntax_end, line_offset + 4);
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,

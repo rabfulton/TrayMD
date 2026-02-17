@@ -4,6 +4,7 @@
 #include "editor.h"
 
 static void on_new_clicked(GtkButton *button, gpointer user_data);
+static void on_copy_clicked(GtkButton *button, gpointer user_data);
 static void on_delete_clicked(GtkButton *button, gpointer user_data);
 static void on_prev_clicked(GtkButton *button, gpointer user_data);
 static void on_next_clicked(GtkButton *button, gpointer user_data);
@@ -87,6 +88,14 @@ MarkydWindow *markyd_window_new(MarkydApp *app) {
   gtk_widget_set_tooltip_text(self->btn_new, "New Note");
   g_signal_connect(self->btn_new, "clicked", G_CALLBACK(on_new_clicked), self);
   gtk_header_bar_pack_start(GTK_HEADER_BAR(self->header_bar), self->btn_new);
+
+  /* Copy note button (after New) */
+  self->btn_copy =
+      gtk_button_new_from_icon_name("edit-copy-symbolic", GTK_ICON_SIZE_BUTTON);
+  gtk_widget_set_tooltip_text(self->btn_copy,
+                              "Copy Note (with markdown syntax)");
+  g_signal_connect(self->btn_copy, "clicked", G_CALLBACK(on_copy_clicked), self);
+  gtk_header_bar_pack_start(GTK_HEADER_BAR(self->header_bar), self->btn_copy);
 
   /* Delete note button (next to New) */
   self->btn_delete =
@@ -284,6 +293,27 @@ static void on_new_clicked(GtkButton *button, gpointer user_data) {
   MarkydWindow *self = (MarkydWindow *)user_data;
   (void)button;
   markyd_app_new_note(self->app);
+}
+
+static void on_copy_clicked(GtkButton *button, gpointer user_data) {
+  MarkydWindow *self = (MarkydWindow *)user_data;
+  gchar *content;
+  GtkClipboard *clipboard;
+
+  (void)button;
+
+  if (!self || !self->editor) {
+    return;
+  }
+
+  content = markyd_editor_get_content(self->editor);
+  if (!content) {
+    return;
+  }
+
+  clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+  gtk_clipboard_set_text(clipboard, content, -1);
+  g_free(content);
 }
 
 static void on_delete_clicked(GtkButton *button, gpointer user_data) {

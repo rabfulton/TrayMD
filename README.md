@@ -23,6 +23,7 @@ A lightweight GTK 3 notes application for Linux system trays, supporting live ed
 | `**bold**` | Bold text |
 | `*italic*` | Italic text |
 | `` `code` `` | Inline code |
+| <code>```...```</code> | Code block |
 | `- item` | List item |
 | `> quote` | Block quote |
 | `[text](url)` | Link |

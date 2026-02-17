@@ -141,26 +141,131 @@ static void clear_last_paste(MarkydEditor *self) {
   self->paste_valid = FALSE;
 }
 
+static gboolean is_all_ascii_space(const gchar *s) {
+  while (s && *s) {
+    if (!g_ascii_isspace(*s)) {
+      return FALSE;
+    }
+    s++;
+  }
+  return TRUE;
+}
+
+static gboolean is_code_fence_line(const gchar *line, gboolean in_code_block) {
+  gchar *trimmed;
+  const gchar *p;
+  gint ticks = 0;
+  gboolean result = FALSE;
+
+  if (!line) {
+    return FALSE;
+  }
+
+  trimmed = g_strstrip(g_strdup(line));
+  p = trimmed;
+
+  while (*p == '`') {
+    ticks++;
+    p++;
+  }
+
+  if (ticks >= 3) {
+    if (in_code_block) {
+      result = is_all_ascii_space(p);
+    } else {
+      result = (strchr(p, '`') == NULL);
+    }
+  }
+
+  g_free(trimmed);
+  return result;
+}
+
+static gboolean is_iter_inside_code_block(GtkTextBuffer *buffer,
+                                          const GtkTextIter *iter) {
+  GtkTextIter scan_line_start;
+  GtkTextIter line_start;
+  gboolean in_code_block = FALSE;
+
+  if (!buffer || !iter) {
+    return FALSE;
+  }
+
+  scan_line_start = *iter;
+  gtk_text_iter_set_line_offset(&scan_line_start, 0);
+  gtk_text_buffer_get_start_iter(buffer, &line_start);
+
+  while (gtk_text_iter_compare(&line_start, &scan_line_start) <= 0) {
+    GtkTextIter line_end = line_start;
+    gchar *line_text;
+
+    gtk_text_iter_forward_to_line_end(&line_end);
+    line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, TRUE);
+    if (is_code_fence_line(line_text, in_code_block)) {
+      in_code_block = !in_code_block;
+    }
+    g_free(line_text);
+
+    if (gtk_text_iter_equal(&line_start, &scan_line_start) ||
+        !gtk_text_iter_forward_line(&line_start)) {
+      break;
+    }
+  }
+
+  return in_code_block;
+}
+
+static gboolean next_line_is_opening_fence(GtkTextBuffer *buffer,
+                                           const GtkTextIter *iter) {
+  GtkTextIter next_line_start;
+  GtkTextIter next_line_end;
+  gchar *line_text;
+  gboolean result = FALSE;
+
+  if (!buffer || !iter) {
+    return FALSE;
+  }
+
+  next_line_start = *iter;
+  gtk_text_iter_set_line_offset(&next_line_start, 0);
+  if (!gtk_text_iter_forward_line(&next_line_start)) {
+    return FALSE;
+  }
+
+  next_line_end = next_line_start;
+  gtk_text_iter_forward_to_line_end(&next_line_end);
+  line_text =
+      gtk_text_buffer_get_text(buffer, &next_line_start, &next_line_end, TRUE);
+  result = is_code_fence_line(line_text, FALSE);
+  g_free(line_text);
+
+  return result;
+}
+
 static void normalize_list_markers(MarkydEditor *self) {
   GtkTextIter line_start, end;
   GArray *offsets = g_array_new(FALSE, FALSE, sizeof(gint));
+  gboolean in_code_block = FALSE;
 
   gtk_text_buffer_get_bounds(self->buffer, &line_start, &end);
   gtk_text_iter_set_line_offset(&line_start, 0);
 
   while (!gtk_text_iter_is_end(&line_start)) {
     gint offset = gtk_text_iter_get_offset(&line_start);
-    GtkTextIter a = line_start;
-    GtkTextIter b = line_start;
+    GtkTextIter line_end = line_start;
+    gchar *line_text;
 
-    if (gtk_text_iter_forward_char(&b)) {
-      gunichar ch0 = gtk_text_iter_get_char(&a);
-      gunichar ch1 = gtk_text_iter_get_char(&b);
-
-      if ((ch0 == '-' || ch0 == '*') && ch1 == ' ') {
-        g_array_append_val(offsets, offset);
-      }
+    gtk_text_iter_forward_to_line_end(&line_end);
+    line_text = gtk_text_buffer_get_text(self->buffer, &line_start, &line_end,
+                                         TRUE);
+    if (is_code_fence_line(line_text, in_code_block)) {
+      in_code_block = !in_code_block;
+    } else if (!in_code_block && line_text[0] != '\0' &&
+               (line_text[0] == '-' || line_text[0] == '*') &&
+               line_text[1] == ' ') {
+      g_array_append_val(offsets, offset);
     }
+    g_free(line_text);
 
     if (!gtk_text_iter_forward_line(&line_start)) {
       break;
@@ -684,7 +789,55 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
     gtk_text_iter_forward_to_line_end(&line_end);
   }
 
-  line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
+  line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, TRUE);
+
+  gboolean inside_code = is_iter_inside_code_block(buffer, &cursor);
+  gboolean on_fence_line = is_code_fence_line(line_text, FALSE);
+  gboolean cursor_at_line_end = gtk_text_iter_equal(&cursor, &line_end);
+  gboolean above_opening_fence =
+      cursor_at_line_end ? next_line_is_opening_fence(buffer, &cursor) : FALSE;
+  gboolean line_has_code_tag = FALSE;
+
+  GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+  GtkTextTag *code_block_tag =
+      table ? gtk_text_tag_table_lookup(table, "code_block") : NULL;
+  if (code_block_tag) {
+    line_has_code_tag = gtk_text_iter_has_tag(&line_start, code_block_tag);
+    if (!line_has_code_tag && !gtk_text_iter_equal(&line_start, &line_end)) {
+      GtkTextIter probe = line_end;
+      if (gtk_text_iter_backward_char(&probe)) {
+        line_has_code_tag = gtk_text_iter_has_tag(&probe, code_block_tag);
+      }
+    }
+  }
+
+  if (cursor_at_line_end && above_opening_fence && !line_has_code_tag) {
+    gint insert_start_off = gtk_text_iter_get_offset(&cursor);
+    GtkTextIter insert_pos = cursor;
+    GtkTextIter insert_start;
+    GtkTextIter insert_end;
+    self->updating_tags = TRUE;
+    gtk_text_buffer_insert(buffer, &insert_pos, "\n", 1);
+    gtk_text_buffer_get_iter_at_offset(buffer, &insert_start, insert_start_off);
+    gtk_text_buffer_get_iter_at_offset(buffer, &insert_end, insert_start_off + 1);
+    gtk_text_buffer_remove_all_tags(buffer, &insert_start, &insert_end);
+    gtk_text_buffer_place_cursor(buffer, &insert_end);
+    self->updating_tags = FALSE;
+
+    if (self->markdown_idle_id != 0) {
+      g_source_remove(self->markdown_idle_id);
+      self->markdown_idle_id = 0;
+    }
+    apply_markdown(self);
+    gtk_widget_queue_draw(self->text_view);
+    g_free(line_text);
+    return TRUE;
+  }
+
+  if (inside_code || on_fence_line) {
+    g_free(line_text);
+    return FALSE;
+  }
 
   /* First check: is this an empty list item? (just "- " or "1. " with no
    * content) */
