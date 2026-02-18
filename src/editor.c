@@ -3,7 +3,6 @@
 #include "markdown.h"
 #include "window.h"
 #include <ctype.h>
-#include <stdarg.h>
 #include <string.h>
 
 static void on_buffer_changed(GtkTextBuffer *buffer, gpointer user_data);
@@ -26,34 +25,6 @@ static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
 static const gunichar UNORDERED_LIST_BULLET = 0x2022; /* '•' */
-
-static gboolean editor_debug_enabled(void) {
-  static gint cached = -1;
-  const gchar *env;
-
-  if (cached >= 0) {
-    return cached != 0;
-  }
-
-  env = g_getenv("TRAYMD_MD_DEBUG");
-  cached = (env && *env && strcmp(env, "0") != 0) ? 1 : 0;
-  return cached != 0;
-}
-
-static void editor_debug(const gchar *fmt, ...) {
-  va_list ap;
-  gchar *msg;
-
-  if (!editor_debug_enabled()) {
-    return;
-  }
-
-  va_start(ap, fmt);
-  msg = g_strdup_vprintf(fmt, ap);
-  va_end(ap);
-  g_printerr("[editor] %s\n", msg);
-  g_free(msg);
-}
 
 static gint compare_int_desc(gconstpointer a, gconstpointer b) {
   const gint ia = *(const gint *)a;
@@ -264,9 +235,6 @@ static void normalize_list_markers(MarkydEditor *self) {
     line_text = gtk_text_buffer_get_text(self->buffer, &line_start, &line_end,
                                          TRUE);
     if (is_code_fence_line(line_text, in_code_block)) {
-      editor_debug("normalize fence line=%d toggle %d->%d text='%s'",
-                   gtk_text_iter_get_line(&line_start), in_code_block,
-                   !in_code_block, line_text ? line_text : "");
       in_code_block = !in_code_block;
     } else if (!in_code_block && line_text[0] != '\0' &&
                (line_text[0] == '-' || line_text[0] == '*') &&
@@ -281,7 +249,6 @@ static void normalize_list_markers(MarkydEditor *self) {
   }
 
   if (offsets->len > 0) {
-    editor_debug("normalize converting %u list marker(s)", offsets->len);
     g_array_sort(offsets, compare_int_desc);
     for (guint i = 0; i < offsets->len; i++) {
       gint offset = g_array_index(offsets, gint, i);
@@ -583,6 +550,21 @@ GtkWidget *markyd_editor_get_widget(MarkydEditor *self) {
   return self->text_view;
 }
 
+void markyd_editor_focus(MarkydEditor *self) {
+  GtkTextMark *insert_mark;
+
+  if (!self || !self->text_view || !self->buffer) {
+    return;
+  }
+
+  gtk_widget_grab_focus(self->text_view);
+  insert_mark = gtk_text_buffer_get_insert(self->buffer);
+  if (insert_mark) {
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(self->text_view), insert_mark,
+                                 0.0, FALSE, 0.0, 0.0);
+  }
+}
+
 /* Check if line is an empty list item (just the prefix with no content) */
 static gboolean is_empty_list_item(const gchar *line) {
   if (!line || !*line)
@@ -803,11 +785,6 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
   gboolean inside_code = is_iter_inside_code_block(buffer, &cursor);
   gboolean on_fence_line = is_code_fence_line(line_text, FALSE);
   gboolean cursor_at_line_end = gtk_text_iter_equal(&cursor, &line_end);
-  editor_debug("enter line=%d cursor_off=%d eol=%d inside_code=%d on_fence=%d "
-               "text='%s'",
-               gtk_text_iter_get_line(&line_start), gtk_text_iter_get_offset(&cursor),
-               cursor_at_line_end, inside_code, on_fence_line,
-               line_text ? line_text : "");
 
   if (cursor_at_line_end && on_fence_line) {
     gint insert_start_off = gtk_text_iter_get_offset(&cursor);
@@ -828,15 +805,11 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
     }
     apply_markdown(self);
     gtk_widget_queue_draw(self->text_view);
-    editor_debug("enter handled as fence-newline line=%d",
-                 gtk_text_iter_get_line(&line_start));
     g_free(line_text);
     return TRUE;
   }
 
   if (inside_code || on_fence_line) {
-    editor_debug("enter passthrough inside_code=%d on_fence=%d", inside_code,
-                 on_fence_line);
     g_free(line_text);
     return FALSE;
   }
@@ -844,8 +817,6 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
   /* First check: is this an empty list item? (just "- " or "1. " with no
    * content) */
   if (is_empty_list_item(line_text)) {
-    editor_debug("enter empty-list-item clear line=%d",
-                 gtk_text_iter_get_line(&line_start));
     /* Delete the entire line content (the empty list marker) */
     self->updating_tags = TRUE;
     gtk_text_buffer_delete(buffer, &line_start, &line_end);
@@ -864,8 +835,6 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
   g_free(line_text);
 
   if (prefix) {
-    editor_debug("enter list-continue prefix='%s' line=%d", prefix,
-                 gtk_text_iter_get_line(&line_start));
     /* Insert newline and the list prefix */
     self->updating_tags = TRUE;
 
@@ -891,8 +860,6 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
     return TRUE; /* Consume the event */
   }
 
-  editor_debug("enter default passthrough line=%d",
-               gtk_text_iter_get_line(&line_start));
   return FALSE; /* Let GTK handle the keypress normally */
 }
 

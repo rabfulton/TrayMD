@@ -218,6 +218,7 @@ void markyd_app_new_note(MarkydApp *self) {
 
   /* Clear editor */
   markyd_editor_set_content(self->editor, "");
+  markyd_editor_focus(self->editor);
   self->modified = TRUE;
   markyd_app_schedule_save(self);
 

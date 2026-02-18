@@ -1,7 +1,6 @@
 #include "markdown.h"
 #include "config.h"
 #include <ctype.h>
-#include <stdarg.h>
 #include <string.h>
 
 /* Tag names */
@@ -18,34 +17,6 @@
 #define TAG_LINK "link"
 #define TAG_HRULE "hrule"
 #define TAG_INVISIBLE "invisible"
-
-static gboolean markdown_debug_enabled(void) {
-  static gint cached = -1;
-  const gchar *env;
-
-  if (cached >= 0) {
-    return cached != 0;
-  }
-
-  env = g_getenv("TRAYMD_MD_DEBUG");
-  cached = (env && *env && strcmp(env, "0") != 0) ? 1 : 0;
-  return cached != 0;
-}
-
-static void markdown_debug(const gchar *fmt, ...) {
-  va_list ap;
-  gchar *msg;
-
-  if (!markdown_debug_enabled()) {
-    return;
-  }
-
-  va_start(ap, fmt);
-  msg = g_strdup_vprintf(fmt, ap);
-  va_end(ap);
-  g_printerr("[markdown] %s\n", msg);
-  g_free(msg);
-}
 
 static void collect_anchor_offsets(GtkTextBuffer *buffer, const gchar *data_key,
                                    GArray *offsets) {
@@ -501,9 +472,6 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
 
     if (is_code_fence_line(line_text, in_code_block)) {
-      markdown_debug("fence line=%d active=%d hide=%d toggle %d->%d text='%s'",
-                     line_number, active_line, !active_line, in_code_block,
-                     !in_code_block, line_text ? line_text : "");
       if (!active_line) {
         gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
                                           &line_end);

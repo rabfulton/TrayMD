@@ -42,6 +42,7 @@ gchar *markyd_editor_get_content(MarkydEditor *editor);
 
 /* Widget access */
 GtkWidget *markyd_editor_get_widget(MarkydEditor *editor);
+void markyd_editor_focus(MarkydEditor *editor);
 
 /* Force a refresh of markdown styling/rendering (e.g., after settings change). */
 void markyd_editor_refresh(MarkydEditor *editor);
