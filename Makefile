@@ -46,7 +46,8 @@ $(OBJDIR)/main.o: $(SRCDIR)/app.h $(SRCDIR)/tray.h $(SRCDIR)/window.h
 $(OBJDIR)/app.o: $(SRCDIR)/app.h $(SRCDIR)/config.h $(SRCDIR)/notes.h $(SRCDIR)/window.h $(SRCDIR)/editor.h
 $(OBJDIR)/window.o: $(SRCDIR)/window.h $(SRCDIR)/app.h $(SRCDIR)/editor.h $(SRCDIR)/config.h
 $(OBJDIR)/editor.o: $(SRCDIR)/editor.h $(SRCDIR)/markdown.h $(SRCDIR)/app.h
-$(OBJDIR)/markdown.o: $(SRCDIR)/markdown.h
+$(OBJDIR)/markdown.o: $(SRCDIR)/markdown.h $(SRCDIR)/code_highlight.h
+$(OBJDIR)/code_highlight.o: $(SRCDIR)/code_highlight.h
 $(OBJDIR)/notes.o: $(SRCDIR)/notes.h
 $(OBJDIR)/tray.o: $(SRCDIR)/tray.h $(SRCDIR)/app.h $(SRCDIR)/window.h $(SRCDIR)/config.h
 $(OBJDIR)/config.o: $(SRCDIR)/config.h

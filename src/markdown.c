@@ -1,4 +1,5 @@
 #include "markdown.h"
+#include "code_highlight.h"
 #include "config.h"
 #include <ctype.h>
 #include <string.h>
@@ -95,6 +96,21 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
       "paragraph-background", "#2C313A", "left-margin", 24, "right-margin", 16,
       NULL);
 
+  gtk_text_buffer_create_tag(buffer, MARKYD_TAG_CODE_KW_A, "family",
+                             "Monospace", "foreground", config->h1_color,
+                             "weight", PANGO_WEIGHT_BOLD, NULL);
+
+  gtk_text_buffer_create_tag(buffer, MARKYD_TAG_CODE_KW_B, "family",
+                             "Monospace", "foreground", config->h2_color,
+                             "weight", PANGO_WEIGHT_BOLD, NULL);
+
+  gtk_text_buffer_create_tag(buffer, MARKYD_TAG_CODE_KW_C, "family",
+                             "Monospace", "foreground", config->h3_color,
+                             "weight", PANGO_WEIGHT_BOLD, NULL);
+
+  gtk_text_buffer_create_tag(buffer, MARKYD_TAG_CODE_LITERAL, "family",
+                             "Monospace", "foreground", config->h3_color, NULL);
+
   /* Quote - Indented and styled */
   gtk_text_buffer_create_tag(buffer, TAG_QUOTE, "left-margin", 24, "style",
                              PANGO_STYLE_ITALIC, "foreground", "#5C6370",
@@ -146,6 +162,22 @@ void markdown_update_accent_tags(GtkTextBuffer *buffer) {
   tag = gtk_text_tag_table_lookup(table, TAG_LIST_BULLET);
   if (tag) {
     g_object_set(tag, "foreground", config->list_bullet_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, MARKYD_TAG_CODE_KW_A);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h1_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, MARKYD_TAG_CODE_KW_B);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h2_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, MARKYD_TAG_CODE_KW_C);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h3_color, NULL);
+  }
+  tag = gtk_text_tag_table_lookup(table, MARKYD_TAG_CODE_LITERAL);
+  if (tag) {
+    g_object_set(tag, "foreground", config->h3_color, NULL);
   }
 }
 
@@ -230,6 +262,86 @@ static gboolean is_code_fence_line(const gchar *line, gboolean in_code_block) {
 
   g_free(trimmed);
   return result;
+}
+
+static gchar *extract_code_fence_language(const gchar *line) {
+  gchar *trimmed;
+  const gchar *p;
+  const gchar *lang_start;
+  gint ticks = 0;
+  gchar *language = NULL;
+
+  if (!line) {
+    return NULL;
+  }
+
+  trimmed = g_strstrip(g_strdup(line));
+  p = trimmed;
+
+  while (*p == '`') {
+    ticks++;
+    p++;
+  }
+  if (ticks < 3) {
+    g_free(trimmed);
+    return NULL;
+  }
+
+  while (g_ascii_isspace(*p)) {
+    p++;
+  }
+  if (*p == '\0') {
+    g_free(trimmed);
+    return NULL;
+  }
+
+  lang_start = p;
+  while (*p && !g_ascii_isspace(*p)) {
+    p++;
+  }
+
+  if (p > lang_start) {
+    language = g_strndup(lang_start, (gsize)(p - lang_start));
+  }
+
+  g_free(trimmed);
+  return language;
+}
+
+typedef struct _CodeTagApplyContext {
+  GtkTextBuffer *buffer;
+  gint line_offset;
+} CodeTagApplyContext;
+
+static void on_code_scan_token(gint start_char_offset, gint end_char_offset,
+                               const gchar *tag_name, gpointer user_data) {
+  CodeTagApplyContext *ctx = (CodeTagApplyContext *)user_data;
+  GtkTextIter start, end;
+
+  if (!ctx || !ctx->buffer || !tag_name || end_char_offset <= start_char_offset) {
+    return;
+  }
+
+  gtk_text_buffer_get_iter_at_offset(ctx->buffer, &start,
+                                     ctx->line_offset + start_char_offset);
+  gtk_text_buffer_get_iter_at_offset(ctx->buffer, &end,
+                                     ctx->line_offset + end_char_offset);
+  gtk_text_buffer_apply_tag_by_name(ctx->buffer, tag_name, &start, &end);
+}
+
+static void apply_code_keyword_tags(GtkTextBuffer *buffer, const gchar *line,
+                                    gint line_offset,
+                                    const MarkydLanguageHighlight *language,
+                                    MarkydCodeScanState *state) {
+  CodeTagApplyContext ctx;
+
+  if (!buffer || !line || !language || !state) {
+    return;
+  }
+
+  ctx.buffer = buffer;
+  ctx.line_offset = line_offset;
+  markyd_code_scan_line(language, line, state, on_code_scan_token, &ctx);
 }
 
 static void apply_tag_to_line(GtkTextBuffer *buffer, const gchar *tag_name,
@@ -436,6 +548,8 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
   GArray *hrule_offsets;
   GArray *old_anchor_offsets;
   gboolean in_code_block = FALSE;
+  const MarkydLanguageHighlight *code_language = NULL;
+  MarkydCodeScanState code_scan_state = {0};
   gint insert_line = -1;
 
   /*
@@ -472,6 +586,16 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
 
     if (is_code_fence_line(line_text, in_code_block)) {
+      if (!in_code_block) {
+        gchar *language = extract_code_fence_language(line_text);
+        code_language = markyd_code_lookup_language(language);
+        markyd_code_scan_state_reset(&code_scan_state);
+        g_free(language);
+      } else {
+        code_language = NULL;
+        markyd_code_scan_state_reset(&code_scan_state);
+      }
+
       if (!active_line) {
         gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
                                           &line_end);
@@ -481,6 +605,8 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     /* Inside fenced code block: no markdown parsing, style whole line. */
     else if (in_code_block) {
       apply_tag_to_line(buffer, TAG_CODE_BLOCK, &line_start, &line_end);
+      apply_code_keyword_tags(buffer, line_text, line_offset, code_language,
+                              &code_scan_state);
     }
     /* Headers - hide the # symbols */
     else if (line_starts_with(line_text, "### ")) {

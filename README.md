@@ -29,6 +29,8 @@ A lightweight GTK 3 notes application for Linux system trays, supporting live ed
 | `[text](url)` | Link |
 | `---` | Horizontal rule |
 
+Code blocks currently support a beta version of <code>```c</code>, <code>```java</code>, and <code>```python</code> keyword highlighting).
+
 ## Installation
 
 ### Arch Linux (AUR)
