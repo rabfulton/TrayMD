@@ -29,7 +29,7 @@ A lightweight GTK 3 notes application for Linux system trays, supporting live ed
 | `[text](url)` | Link |
 | `---` | Horizontal rule |
 
-Code blocks currently support a beta version of <code>```c</code>, <code>```java</code>, and <code>```python</code> keyword highlighting).
+Code blocks currently support a beta version of keyword highlighting for fenced languages `c`, `java`, and `python`.
 
 ## Installation
 
