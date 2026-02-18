@@ -1,6 +1,7 @@
 #include "markdown.h"
 #include "config.h"
 #include <ctype.h>
+#include <stdarg.h>
 #include <string.h>
 
 /* Tag names */
@@ -17,6 +18,34 @@
 #define TAG_LINK "link"
 #define TAG_HRULE "hrule"
 #define TAG_INVISIBLE "invisible"
+
+static gboolean markdown_debug_enabled(void) {
+  static gint cached = -1;
+  const gchar *env;
+
+  if (cached >= 0) {
+    return cached != 0;
+  }
+
+  env = g_getenv("TRAYMD_MD_DEBUG");
+  cached = (env && *env && strcmp(env, "0") != 0) ? 1 : 0;
+  return cached != 0;
+}
+
+static void markdown_debug(const gchar *fmt, ...) {
+  va_list ap;
+  gchar *msg;
+
+  if (!markdown_debug_enabled()) {
+    return;
+  }
+
+  va_start(ap, fmt);
+  msg = g_strdup_vprintf(fmt, ap);
+  va_end(ap);
+  g_printerr("[markdown] %s\n", msg);
+  g_free(msg);
+}
 
 static void collect_anchor_offsets(GtkTextBuffer *buffer, const gchar *data_key,
                                    GArray *offsets) {
@@ -204,6 +233,9 @@ static gboolean is_code_fence_line(const gchar *line, gboolean in_code_block) {
   gboolean result = FALSE;
 
   if (!line) {
+    return FALSE;
+  }
+  if (strchr(line, '\n') != NULL || strchr(line, '\r') != NULL) {
     return FALSE;
   }
 
@@ -427,10 +459,13 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
 
 void markdown_apply_tags(GtkTextBuffer *buffer) {
   GtkTextIter start, end, line_start, line_end;
+  GtkTextIter insert_iter;
+  GtkTextMark *insert_mark;
   gchar *line_text;
   GArray *hrule_offsets;
   GArray *old_anchor_offsets;
   gboolean in_code_block = FALSE;
+  gint insert_line = -1;
 
   /*
    * GtkTextIters become invalid if we mutate the buffer (delete/insert anchors)
@@ -447,11 +482,18 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
 
   /* Process line by line */
   gtk_text_buffer_get_start_iter(buffer, &line_start);
+  insert_mark = gtk_text_buffer_get_insert(buffer);
+  if (insert_mark) {
+    gtk_text_buffer_get_iter_at_mark(buffer, &insert_iter, insert_mark);
+    insert_line = gtk_text_iter_get_line(&insert_iter);
+  }
   hrule_offsets = g_array_new(FALSE, FALSE, sizeof(gint));
 
   while (!gtk_text_iter_is_end(&line_start)) {
     GtkTextIter syntax_end;
     gint line_offset = gtk_text_iter_get_offset(&line_start);
+    gint line_number = gtk_text_iter_get_line(&line_start);
+    gboolean active_line = (line_number == insert_line);
 
     line_end = line_start;
     gtk_text_iter_forward_to_line_end(&line_end);
@@ -459,8 +501,13 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
 
     if (is_code_fence_line(line_text, in_code_block)) {
-      gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
-                                        &line_end);
+      markdown_debug("fence line=%d active=%d hide=%d toggle %d->%d text='%s'",
+                     line_number, active_line, !active_line, in_code_block,
+                     !in_code_block, line_text ? line_text : "");
+      if (!active_line) {
+        gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
+                                          &line_end);
+      }
       in_code_block = !in_code_block;
     }
     /* Inside fenced code block: no markdown parsing, style whole line. */
