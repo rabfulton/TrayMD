@@ -203,7 +203,7 @@ static gboolean is_hrule_line(const gchar *line) {
   }
 
   c = trimmed[0];
-  if (!(c == '-' || c == '*' || c == '_')) {
+  if (!(c == '-' || c == '*')) {
     g_free(trimmed);
     return FALSE;
   }
@@ -398,6 +398,24 @@ static void apply_inline_tags(GtkTextBuffer *buffer, GtkTextIter *line_start,
   p = line_text;
 
   while (*p) {
+    /* Bold+Italic: ***text*** */
+    if (p[0] == '*' && p[1] == '*' && p[2] == '*') {
+      const gchar *end = strstr(p + 3, "***");
+      if (end && end > p + 3) {
+        gint match_start = g_utf8_pointer_to_offset(line_text, p) + line_offset;
+        gint content_start = match_start + 3;
+        gint content_end = g_utf8_pointer_to_offset(line_text, end) + line_offset;
+
+        apply_tag_hide_syntax(buffer, TAG_BOLD, content_start, content_end,
+                              match_start, 3, content_end, 3);
+        apply_tag_hide_syntax(buffer, TAG_ITALIC, content_start, content_end,
+                              match_start, 3, content_end, 3);
+
+        p = end + 3;
+        continue;
+      }
+    }
+
     /* Bold: **text** */
     if (p[0] == '*' && p[1] == '*') {
       const gchar *end = strstr(p + 2, "**");
@@ -579,9 +597,11 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     gint line_offset = gtk_text_iter_get_offset(&line_start);
     gint line_number = gtk_text_iter_get_line(&line_start);
     gboolean active_line = (line_number == insert_line);
+    gboolean line_has_trailing_newline = FALSE;
 
     line_end = line_start;
     gtk_text_iter_forward_to_line_end(&line_end);
+    line_has_trailing_newline = !gtk_text_iter_is_end(&line_end);
 
     line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
 
@@ -671,7 +691,8 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
       }
     }
   /* Horizontal rule */
-  else if (is_hrule_line(line_text)) {
+  else if (is_hrule_line(line_text) && !active_line &&
+           line_has_trailing_newline) {
       /* Hide the markdown syntax, but leave it editable. */
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
                                         &line_end);
