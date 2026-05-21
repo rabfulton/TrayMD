@@ -340,18 +340,24 @@ static void set_link_cursor(MarkydEditor *self, gboolean active) {
     return;
   }
 
+  GdkDisplay *display = gdk_window_get_display(win);
+  GdkCursor *cursor;
+
   if (active) {
-    GdkDisplay *display = gdk_window_get_display(win);
-    GdkCursor *cursor = gdk_cursor_new_from_name(display, "pointer");
+    cursor = gdk_cursor_new_from_name(display, "pointer");
     if (!cursor) {
       cursor = gdk_cursor_new_for_display(display, GDK_HAND2);
     }
-    gdk_window_set_cursor(win, cursor);
-    if (cursor) {
-      g_object_unref(cursor);
-    }
   } else {
-    gdk_window_set_cursor(win, NULL);
+    cursor = gdk_cursor_new_from_name(display, "text");
+    if (!cursor) {
+      cursor = gdk_cursor_new_for_display(display, GDK_XTERM);
+    }
+  }
+
+  gdk_window_set_cursor(win, cursor);
+  if (cursor) {
+    g_object_unref(cursor);
   }
 }
 
@@ -484,6 +490,23 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
                    G_CALLBACK(on_paste_clipboard), self);
   g_signal_connect_after(self->text_view, "paste-clipboard",
                          G_CALLBACK(on_paste_clipboard_after), self);
+
+  /* Set initial cursor to text (I-beam) */
+  {
+    GdkWindow *win = gtk_text_view_get_window(GTK_TEXT_VIEW(self->text_view),
+                                              GTK_TEXT_WINDOW_TEXT);
+    if (win) {
+      GdkDisplay *display = gdk_window_get_display(win);
+      GdkCursor *cursor = gdk_cursor_new_from_name(display, "text");
+      if (!cursor) {
+        cursor = gdk_cursor_new_for_display(display, GDK_XTERM);
+      }
+      gdk_window_set_cursor(win, cursor);
+      if (cursor) {
+        g_object_unref(cursor);
+      }
+    }
+  }
 
   return self;
 }
