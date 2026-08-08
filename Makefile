@@ -55,7 +55,7 @@ uninstall:
 $(OBJDIR)/main.o: $(SRCDIR)/app.h $(SRCDIR)/tray.h $(SRCDIR)/window.h
 $(OBJDIR)/app.o: $(SRCDIR)/app.h $(SRCDIR)/config.h $(SRCDIR)/notes.h $(SRCDIR)/window.h $(SRCDIR)/editor.h
 $(OBJDIR)/window.o: $(SRCDIR)/window.h $(SRCDIR)/app.h $(SRCDIR)/editor.h $(SRCDIR)/config.h
-$(OBJDIR)/editor.o: $(SRCDIR)/editor.h $(SRCDIR)/markdown.h $(SRCDIR)/app.h $(SRCDIR)/config.h
+$(OBJDIR)/editor.o: $(SRCDIR)/editor.h $(SRCDIR)/markdown.h $(SRCDIR)/app.h $(SRCDIR)/config.h $(SRCDIR)/undo.h
 $(OBJDIR)/markdown.o: $(SRCDIR)/markdown.h $(SRCDIR)/code_highlight.h $(SRCDIR)/config.h
 $(OBJDIR)/code_highlight.o: $(SRCDIR)/code_highlight.h
 $(OBJDIR)/notes.o: $(SRCDIR)/notes.h
