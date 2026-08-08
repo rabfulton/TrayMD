@@ -1,6 +1,7 @@
 #ifndef MARKYD_EDITOR_H
 #define MARKYD_EDITOR_H
 
+#include "undo.h"
 #include <gtk/gtk.h>
 
 typedef struct _MarkydApp MarkydApp;
@@ -15,6 +16,18 @@ typedef struct _MarkydEditor {
 
   /* Coalesce markdown re-rendering to idle to avoid invalidating GTK iterators. */
   guint markdown_idle_id;
+
+  /* Undo/redo history */
+  MarkydUndo *undo;
+
+  /* Set while we rewrite the buffer ourselves (rendering, content load,
+   * undo/redo) so those edits don't end up in the history. */
+  gboolean undo_suppress;
+
+  /* Depth of the GTK user action being applied, and whether it already
+   * claimed its undo step. */
+  gint user_action_depth;
+  gboolean user_action_recorded;
 
   /* "Undo last paste" support (single-level) */
   gboolean in_paste;
