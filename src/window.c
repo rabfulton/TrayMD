@@ -157,6 +157,8 @@ void markyd_window_apply_css(MarkydWindow *self) {
   const gchar *fg;
   const gchar *sel_bg;
 
+  config_apply_theme_defaults(config, config->dark_palette);
+
   if (css) {
     gtk_style_context_remove_provider_for_screen(gdk_screen_get_default(),
                                                  GTK_STYLE_PROVIDER(css));
@@ -244,7 +246,9 @@ void markyd_window_apply_css(MarkydWindow *self) {
       gdk_screen_get_default(), GTK_STYLE_PROVIDER(css),
       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
-  (void)self;
+  if (self && self->editor) {
+    markyd_editor_refresh(self->editor);
+  }
 }
 
 void markyd_window_free(MarkydWindow *self) {

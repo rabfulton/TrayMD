@@ -22,6 +22,9 @@ void markdown_init_tags(GtkTextBuffer *buffer);
 /* Update accent colors for existing tags (after config changes). */
 void markdown_update_accent_tags(GtkTextBuffer *buffer);
 
+/* Recolor code, quotes, links, and rules for the editor background. */
+void markdown_update_theme_tags(GtkTextBuffer *buffer, gboolean dark);
+
 /* Apply markdown formatting to entire buffer */
 void markdown_apply_tags(GtkTextBuffer *buffer);
 

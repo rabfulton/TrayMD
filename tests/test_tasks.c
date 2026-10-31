@@ -3,6 +3,7 @@
 #include "editor.h"
 #include "markdown.h"
 #include "window.h"
+#include <math.h>
 
 /* Exercise the editor without writing notes or changing the real application. */
 void markyd_app_schedule_save(MarkydApp *app) { app->modified = TRUE; }
@@ -411,6 +412,201 @@ static void test_typing_bottom_space(void) {
   g_string_free(note, TRUE);
 }
 
+static void assert_markdown_palette(MarkydEditor *editor, gboolean light) {
+  const gchar *tags[] = {"code", "code_block", "quote"};
+  const gchar *background_properties[] = {"background-rgba",
+      "paragraph-background-rgba", "paragraph-background-rgba"};
+  for (guint i = 0; i < G_N_ELEMENTS(tags); i++) {
+    GtkTextTag *tag = gtk_text_tag_table_lookup(
+        gtk_text_buffer_get_tag_table(editor->buffer), tags[i]);
+    GdkRGBA *background = NULL;
+    GdkRGBA *foreground = NULL;
+    g_object_get(tag, background_properties[i], &background,
+                  "foreground-rgba", &foreground, NULL);
+    g_assert_nonnull(background);
+    g_assert_nonnull(foreground);
+    gdouble brightness = (background->red + background->green + background->blue) / 3;
+    if (light) {
+      g_assert_cmpfloat(brightness, >, 0.9);
+      g_assert_cmpfloat(MAX(foreground->red, MAX(foreground->green, foreground->blue)),
+                        <, 0.5);
+    } else {
+      g_assert_cmpfloat(brightness, <, 0.3);
+    }
+    gdk_rgba_free(background);
+    gdk_rgba_free(foreground);
+  }
+}
+
+static const gchar *theme_sample =
+    "Inline `code` and [a link](https://example.com)\n"
+    "```text\nA code block\n```\n> A quoted line\n";
+
+static void test_markdown_theme_switching(void) {
+  g_free(config->theme);
+  config->theme = g_strdup("light");
+  config->font_size = 16;
+  MarkydApp app = {0};
+  MarkydEditor *editor = new_editor(&app, theme_sample);
+  assert_markdown_palette(editor, TRUE);
+  assert_tag_at(editor, "code", "code", TRUE);
+  assert_tag_at(editor, "A code block", "code_block", TRUE);
+  assert_tag_at(editor, "A quoted line", "quote", TRUE);
+
+  MarkydWindow window = {.editor = editor};
+  const gchar *themes[] = {"dark", "light"};
+  for (guint i = 0; i < G_N_ELEMENTS(themes); i++) {
+    g_free(config->theme);
+    config->theme = g_strdup(themes[i]);
+    /* The settings UI applies CSS to this already-open editor. */
+    markyd_window_apply_css(&window);
+    flush_events();
+    wait_for_layout(editor);
+    assert_markdown_palette(editor, i == 1);
+    assert_content(editor, theme_sample);
+
+    /* Paragraph backgrounds must be painted, including behind hidden '> '. */
+    GtkWidget *offscreen = g_object_get_data(G_OBJECT(editor->text_view), "test-window");
+    GdkPixbuf *image = gtk_offscreen_window_get_pixbuf(GTK_OFFSCREEN_WINDOW(offscreen));
+    const gchar *paragraph_text[] = {"A code block", "A quoted line"};
+    for (guint p = 0; p < G_N_ELEMENTS(paragraph_text); p++) {
+      GtkTextIter start, match, end;
+      gtk_text_buffer_get_start_iter(editor->buffer, &start);
+      g_assert_true(gtk_text_iter_forward_search(&start, paragraph_text[p], 0,
+                                                 &match, &end, NULL));
+      GdkRectangle rect;
+      gint x, y, image_x, image_y;
+      gtk_text_view_get_iter_location(GTK_TEXT_VIEW(editor->text_view), &match, &rect);
+      gtk_text_view_buffer_to_window_coords(GTK_TEXT_VIEW(editor->text_view),
+          GTK_TEXT_WINDOW_WIDGET, rect.x, rect.y + rect.height / 2, &x, &y);
+      x = gtk_widget_get_allocated_width(editor->text_view) - 32;
+      g_assert_true(gtk_widget_translate_coordinates(editor->text_view, offscreen,
+                                                     x, y, &image_x, &image_y));
+      g_assert_cmpint(image_y, >=, 0);
+      g_assert_cmpint(image_y, <, gdk_pixbuf_get_height(image));
+      const guchar *pixel = gdk_pixbuf_get_pixels(image) +
+          image_y * gdk_pixbuf_get_rowstride(image) +
+          image_x * gdk_pixbuf_get_n_channels(image);
+      if (i == 1) {
+        g_assert_cmpint(MIN(pixel[0], MIN(pixel[1], pixel[2])), >, 230);
+        g_assert_cmpint(MAX(pixel[0], MAX(pixel[1], pixel[2])), <, 255);
+      } else {
+        g_assert_cmpint(MAX(pixel[0], MAX(pixel[1], pixel[2])), <, 80);
+      }
+    }
+    g_object_unref(image);
+  }
+  g_assert_false(app.modified);
+  free_editor(editor);
+}
+
+static void test_markdown_system_theme(void) {
+  g_free(config->theme);
+  config->theme = g_strdup("system");
+  MarkydApp app = {0};
+  gchar *sample = g_strconcat(theme_sample, "- [ ] Task\n", NULL);
+  MarkydEditor *editor = new_editor(&app, sample);
+  config_set_accent(config, MARKYD_ACCENT_H2, "#123456");
+  GtkStyleContext *context = gtk_widget_get_style_context(editor->text_view);
+  GtkCssProvider *system_theme = gtk_css_provider_new();
+  gtk_style_context_add_provider(context, GTK_STYLE_PROVIDER(system_theme),
+                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+  const gchar *styles[] = {
+      "@define-color theme_base_color #fafafa; textview { background-color: @theme_base_color; }",
+      "@define-color theme_base_color #101010; textview { background-color: @theme_base_color; }"};
+  gchar *light_accent = NULL;
+  for (guint i = 0; i < G_N_ELEMENTS(styles); i++) {
+    GError *error = NULL;
+    g_assert_true(gtk_css_provider_load_from_data(system_theme, styles[i], -1, &error));
+    g_assert_no_error(error);
+    flush_events();
+    wait_for_layout(editor);
+    /* GTK style updates must refresh the palette without a manual note reload. */
+    assert_markdown_palette(editor, i == 0);
+    assert_content(editor, sample);
+    if (i == 0) {
+      light_accent = g_strdup(config->h1_color);
+    } else {
+      g_assert_cmpstr(config->h1_color, !=, light_accent);
+    }
+    g_assert_cmpstr(config->h2_color, ==, "#123456");
+    GdkRGBA accent, actual;
+    g_assert_true(gdk_rgba_parse(&accent, config->list_bullet_color));
+    gtk_style_context_get_color(gtk_widget_get_style_context(checkbox_at_line(editor, 5)),
+                                 GTK_STATE_FLAG_NORMAL, &actual);
+    g_assert_true(gdk_rgba_equal(&accent, &actual));
+  }
+  gtk_style_context_remove_provider(context, GTK_STYLE_PROVIDER(system_theme));
+  g_object_unref(system_theme);
+  g_assert_false(app.modified);
+  free_editor(editor);
+  config_reset_accent(config, MARKYD_ACCENT_H2);
+  g_free(light_accent);
+  g_free(sample);
+}
+
+static gdouble luminance(const GdkRGBA *color) {
+  gdouble rgb[] = {color->red, color->green, color->blue};
+  for (guint i = 0; i < G_N_ELEMENTS(rgb); i++) {
+    rgb[i] = rgb[i] <= 0.04045 ? rgb[i] / 12.92 : pow((rgb[i] + 0.055) / 1.055, 2.4);
+  }
+  return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+}
+
+static void test_light_accent_contrast(void) {
+  for (gint i = 0; i < MARKYD_ACCENT_COUNT; i++) {
+    config_reset_accent(config, i);
+  }
+  g_free(config->theme);
+  config->theme = g_strdup("light");
+  MarkydApp app = {0};
+  const gchar *sample = "# Heading\n## Subheading\n### Title\n- Item\n"
+                        "```python\ndef greet():\n    return True, 42\n```\n";
+  MarkydEditor *editor = new_editor(&app, sample);
+  assert_tag_at(editor, "def", "code_kw_b", TRUE);
+  assert_tag_at(editor, "return", "code_kw_a", TRUE);
+  assert_tag_at(editor, "True", "code_kw_c", TRUE);
+  assert_tag_at(editor, "42", "code_literal", TRUE);
+
+  const gchar *tags[] = {"h1", "h2", "h3", "list_bullet",
+                         "code_kw_a", "code_kw_b", "code_kw_c", "code_literal"};
+  GtkTextTagTable *table = gtk_text_buffer_get_tag_table(editor->buffer);
+  GdkRGBA *block_background = NULL;
+  g_object_get(gtk_text_tag_table_lookup(table, "code_block"),
+                "paragraph-background-rgba", &block_background, NULL);
+  gdouble background_luminance = luminance(block_background);
+  for (guint i = 0; i < G_N_ELEMENTS(tags); i++) {
+    GdkRGBA *foreground = NULL;
+    g_object_get(gtk_text_tag_table_lookup(table, tags[i]),
+                  "foreground-rgba", &foreground, NULL);
+    gdouble foreground_luminance = luminance(foreground);
+    gdouble contrast = (MAX(background_luminance, foreground_luminance) + 0.05) /
+                       (MIN(background_luminance, foreground_luminance) + 0.05);
+    g_assert_cmpfloat(contrast, >=, 4.5);
+    gdk_rgba_free(foreground);
+  }
+  gdk_rgba_free(block_background);
+
+  config_set_accent(config, MARKYD_ACCENT_H1, "#112233");
+  MarkydWindow window = {.editor = editor};
+  const gchar *themes[] = {"dark", "light"};
+  for (guint i = 0; i < G_N_ELEMENTS(themes); i++) {
+    g_free(config->theme);
+    config->theme = g_strdup(themes[i]);
+    markyd_window_apply_css(&window);
+    flush_events();
+    GdkRGBA expected, *actual = NULL;
+    g_assert_true(gdk_rgba_parse(&expected, "#112233"));
+    g_object_get(gtk_text_tag_table_lookup(table, "code_kw_a"),
+                  "foreground-rgba", &actual, NULL);
+    g_assert_true(gdk_rgba_equal(&expected, actual));
+    gdk_rgba_free(actual);
+  }
+  config_reset_accent(config, MARKYD_ACCENT_H1);
+  assert_content(editor, sample);
+  free_editor(editor);
+}
+
 int main(int argc, char **argv) {
   gtk_test_init(&argc, &argv, NULL);
   config = config_new();
@@ -422,6 +618,9 @@ int main(int argc, char **argv) {
   g_test_add_func("/tasks/live-editing", test_live_editing);
   g_test_add_func("/tasks/checkbox-layout-and-themes", test_checkbox_layout_and_themes);
   g_test_add_func("/editor/typing-bottom-space", test_typing_bottom_space);
+  g_test_add_func("/markdown/theme-switching", test_markdown_theme_switching);
+  g_test_add_func("/markdown/system-theme", test_markdown_system_theme);
+  g_test_add_func("/markdown/light-accent-contrast", test_light_accent_contrast);
   gint result = g_test_run();
   config_free(config);
   return result;

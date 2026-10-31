@@ -9,6 +9,68 @@ MarkydConfig *config = NULL;
 
 static gchar *config_path = NULL;
 
+static const gchar *accent_keys[MARKYD_ACCENT_COUNT] = {
+    "h1_color", "h2_color", "h3_color", "list_bullet_color"};
+static const gchar *accent_dark[MARKYD_ACCENT_COUNT] = {
+    "#61AFEF", "#C678DD", "#E5C07B", "#61AFEF"};
+static const gchar *accent_light[MARKYD_ACCENT_COUNT] = {
+    "#0969DA", "#8250DF", "#8A4600", "#0969DA"};
+
+static gchar **accent_slot(MarkydConfig *cfg, MarkydAccent accent) {
+  switch (accent) {
+  case MARKYD_ACCENT_H1: return &cfg->h1_color;
+  case MARKYD_ACCENT_H2: return &cfg->h2_color;
+  case MARKYD_ACCENT_H3: return &cfg->h3_color;
+  case MARKYD_ACCENT_LIST: return &cfg->list_bullet_color;
+  default: return NULL;
+  }
+}
+
+const gchar *config_get_accent(const MarkydConfig *cfg, MarkydAccent accent) {
+  switch (accent) {
+  case MARKYD_ACCENT_H1: return cfg->h1_color;
+  case MARKYD_ACCENT_H2: return cfg->h2_color;
+  case MARKYD_ACCENT_H3: return cfg->h3_color;
+  case MARKYD_ACCENT_LIST: return cfg->list_bullet_color;
+  default: return NULL;
+  }
+}
+
+gboolean config_apply_theme_defaults(MarkydConfig *cfg, gboolean dark) {
+  if (g_strcmp0(cfg->theme, "light") == 0) {
+    dark = FALSE;
+  } else if (g_strcmp0(cfg->theme, "dark") == 0) {
+    dark = TRUE;
+  }
+  cfg->dark_palette = dark;
+  const gchar *const *defaults = dark ? accent_dark : accent_light;
+  gboolean changed = FALSE;
+  for (gint i = 0; i < MARKYD_ACCENT_COUNT; i++) {
+    gchar **slot = accent_slot(cfg, i);
+    if (!cfg->accent_custom[i] && g_strcmp0(*slot, defaults[i]) != 0) {
+      g_free(*slot);
+      *slot = g_strdup(defaults[i]);
+      changed = TRUE;
+    }
+  }
+  return changed;
+}
+
+void config_set_accent(MarkydConfig *cfg, MarkydAccent accent, const gchar *color) {
+  gchar **slot = accent_slot(cfg, accent);
+  g_return_if_fail(slot != NULL && color != NULL);
+  gchar *copy = g_strdup(color);
+  g_free(*slot);
+  *slot = copy;
+  cfg->accent_custom[accent] = TRUE;
+}
+
+void config_reset_accent(MarkydConfig *cfg, MarkydAccent accent) {
+  g_return_if_fail(accent >= 0 && accent < MARKYD_ACCENT_COUNT);
+  cfg->accent_custom[accent] = FALSE;
+  config_apply_theme_defaults(cfg, cfg->dark_palette);
+}
+
 MarkydConfig *config_new(void) {
   MarkydConfig *cfg = g_new0(MarkydConfig, 1);
 
@@ -23,16 +85,24 @@ MarkydConfig *config_new(void) {
   cfg->font_size = 16;
   cfg->theme = g_strdup("dark");
 
-  /* Markdown accent defaults (match previous hardcoded colors) */
-  cfg->h1_color = g_strdup("#61AFEF");
-  cfg->h2_color = g_strdup("#C678DD");
-  cfg->h3_color = g_strdup("#E5C07B");
-  cfg->list_bullet_color = g_strdup("#61AFEF");
+  config_apply_theme_defaults(cfg, TRUE);
 
   cfg->line_numbers = FALSE;
   cfg->word_wrap = TRUE;
 
   return cfg;
+}
+
+MarkydConfig *config_copy(const MarkydConfig *cfg) {
+  MarkydConfig *copy = g_new(MarkydConfig, 1);
+  *copy = *cfg;
+  copy->font_family = g_strdup(cfg->font_family);
+  copy->theme = g_strdup(cfg->theme);
+  copy->h1_color = g_strdup(cfg->h1_color);
+  copy->h2_color = g_strdup(cfg->h2_color);
+  copy->h3_color = g_strdup(cfg->h3_color);
+  copy->list_bullet_color = g_strdup(cfg->list_bullet_color);
+  return copy;
 }
 
 void config_free(MarkydConfig *cfg) {
@@ -119,26 +189,29 @@ gboolean config_load(MarkydConfig *cfg) {
   }
 
   /* Markdown accents */
-  if (g_key_file_has_key(keyfile, "Markdown", "h1_color", NULL)) {
-    g_free(cfg->h1_color);
-    cfg->h1_color =
-        g_key_file_get_string(keyfile, "Markdown", "h1_color", NULL);
+  for (gint i = 0; i < MARKYD_ACCENT_COUNT; i++) {
+    gchar **slot = accent_slot(cfg, i);
+    gboolean stored_color = g_key_file_has_key(keyfile, "Markdown", accent_keys[i], NULL);
+    if (stored_color) {
+      g_free(*slot);
+      *slot = g_key_file_get_string(keyfile, "Markdown", accent_keys[i], NULL);
+    }
+    gchar *custom_key = g_strconcat(accent_keys[i], "_custom", NULL);
+    if (g_key_file_has_key(keyfile, "Markdown", custom_key, NULL)) {
+      GError *flag_error = NULL;
+      gboolean custom = g_key_file_get_boolean(keyfile, "Markdown", custom_key,
+                                                &flag_error);
+      /* An invalid flag must not discard a potentially custom color. */
+      cfg->accent_custom[i] = flag_error ? TRUE : custom;
+      g_clear_error(&flag_error);
+    } else {
+      /* Old files saved defaults too, without identifying user choices. */
+      cfg->accent_custom[i] = stored_color &&
+          g_ascii_strcasecmp(*slot, accent_dark[i]) != 0;
+    }
+    g_free(custom_key);
   }
-  if (g_key_file_has_key(keyfile, "Markdown", "h2_color", NULL)) {
-    g_free(cfg->h2_color);
-    cfg->h2_color =
-        g_key_file_get_string(keyfile, "Markdown", "h2_color", NULL);
-  }
-  if (g_key_file_has_key(keyfile, "Markdown", "h3_color", NULL)) {
-    g_free(cfg->h3_color);
-    cfg->h3_color =
-        g_key_file_get_string(keyfile, "Markdown", "h3_color", NULL);
-  }
-  if (g_key_file_has_key(keyfile, "Markdown", "list_bullet_color", NULL)) {
-    g_free(cfg->list_bullet_color);
-    cfg->list_bullet_color = g_key_file_get_string(
-        keyfile, "Markdown", "list_bullet_color", NULL);
-  }
+  config_apply_theme_defaults(cfg, cfg->dark_palette);
 
   /* Editor */
   if (g_key_file_has_key(keyfile, "Editor", "word_wrap", NULL))
@@ -172,11 +245,15 @@ gboolean config_save(MarkydConfig *cfg) {
   g_key_file_set_string(keyfile, "Appearance", "theme", cfg->theme);
 
   /* Markdown accents */
-  g_key_file_set_string(keyfile, "Markdown", "h1_color", cfg->h1_color);
-  g_key_file_set_string(keyfile, "Markdown", "h2_color", cfg->h2_color);
-  g_key_file_set_string(keyfile, "Markdown", "h3_color", cfg->h3_color);
-  g_key_file_set_string(keyfile, "Markdown", "list_bullet_color",
-                        cfg->list_bullet_color);
+  config_apply_theme_defaults(cfg, cfg->dark_palette);
+  for (gint i = 0; i < MARKYD_ACCENT_COUNT; i++) {
+    /* Keep the original keys readable by older TrayMD versions. */
+    g_key_file_set_string(keyfile, "Markdown", accent_keys[i],
+                           config_get_accent(cfg, i));
+    gchar *custom_key = g_strconcat(accent_keys[i], "_custom", NULL);
+    g_key_file_set_boolean(keyfile, "Markdown", custom_key, cfg->accent_custom[i]);
+    g_free(custom_key);
+  }
 
   /* Editor */
   g_key_file_set_boolean(keyfile, "Editor", "word_wrap", cfg->word_wrap);

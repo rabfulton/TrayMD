@@ -79,6 +79,18 @@ AppIndicator-based trays), you can switch tray backends:
 
 Notes are stored in `~/.local/share/traymd/notes/` as plain markdown files.
 
+Heading, list bullet, checkbox, and syntax highlight accents have separate light
+and dark defaults. System mode follows the GTK theme. In Settings, leave **Use
+theme default** checked for automatic colors; uncheck it to choose a custom color
+that stays the same across themes. Checking it again restores automatic colors.
+
+Existing settings remain compatible: saved colors matching the original defaults
+become automatic, while other colors are preserved as custom. Older settings did
+not record whether a default was explicitly chosen, so an old custom choice that
+exactly matches an original default is treated as automatic. The existing color
+keys remain readable by older TrayMD versions; new `*_custom` flags record the
+distinction. An older version that saves settings will discard these new flags.
+
 
 ## Building From Source
 

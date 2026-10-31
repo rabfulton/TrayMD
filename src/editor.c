@@ -1,5 +1,6 @@
 #include "editor.h"
 #include "app.h"
+#include "config.h"
 #include "markdown.h"
 #include "window.h"
 #include <ctype.h>
@@ -25,7 +26,7 @@ static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
 static void on_editor_style_updated(GtkWidget *widget, gpointer user_data) {
-  (void)user_data;
+  MarkydEditor *self = user_data;
   PangoLayout *layout = gtk_widget_create_pango_layout(widget, "Mg");
   gint line_height;
   pango_layout_get_pixel_size(layout, NULL, &line_height);
@@ -33,6 +34,21 @@ static void on_editor_style_updated(GtkWidget *widget, gpointer user_data) {
 
   /* Reserve one line below the viewport, including while GTK scrolls the caret. */
   gtk_widget_set_margin_bottom(widget, MAX(line_height, 1));
+
+  gboolean dark = g_strcmp0(config->theme, "dark") == 0;
+  if (g_strcmp0(config->theme, "light") != 0 && !dark) {
+    GdkRGBA base;
+    if (gtk_style_context_lookup_color(gtk_widget_get_style_context(widget),
+                                       "theme_base_color", &base)) {
+      dark = (0.2126 * base.red + 0.7152 * base.green + 0.0722 * base.blue) < 0.5;
+    }
+  }
+  gboolean accents_changed = config_apply_theme_defaults(config, dark);
+  markdown_update_theme_tags(gtk_text_view_get_buffer(GTK_TEXT_VIEW(widget)), dark);
+  if (accents_changed) {
+    /* Refresh checkbox CSS too when automatic accents follow a live theme change. */
+    markyd_window_apply_css(self && self->app ? self->app->window : NULL);
+  }
 }
 
 static const gunichar UNORDERED_LIST_BULLET = 0x2022; /* '•' */
@@ -479,7 +495,13 @@ static void schedule_markdown_apply(MarkydEditor *self) {
       g_idle_add_full(G_PRIORITY_LOW, apply_markdown_idle, self, NULL);
 }
 
-void markyd_editor_refresh(MarkydEditor *self) { schedule_markdown_apply(self); }
+void markyd_editor_refresh(MarkydEditor *self) {
+  if (!self) {
+    return;
+  }
+  on_editor_style_updated(self->text_view, self);
+  schedule_markdown_apply(self);
+}
 
 MarkydEditor *markyd_editor_new(MarkydApp *app) {
   MarkydEditor *self = g_new0(MarkydEditor, 1);
@@ -509,13 +531,13 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
   gtk_text_view_set_right_margin(GTK_TEXT_VIEW(self->text_view), 16);
   gtk_text_view_set_top_margin(GTK_TEXT_VIEW(self->text_view), 16);
   gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(self->text_view), 16);
-  g_signal_connect(self->text_view, "style-updated",
-                   G_CALLBACK(on_editor_style_updated), NULL);
-  on_editor_style_updated(self->text_view, NULL);
 
   /* Get buffer and init markdown tags */
   self->buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
   markdown_init_tags(self->buffer);
+  g_signal_connect(self->text_view, "style-updated",
+                   G_CALLBACK(on_editor_style_updated), self);
+  on_editor_style_updated(self->text_view, self);
 
   /* Connect to buffer changes */
   g_signal_connect(self->buffer, "changed", G_CALLBACK(on_buffer_changed),

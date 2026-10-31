@@ -20,6 +20,17 @@
 #define TAG_HRULE "hrule"
 #define TAG_INVISIBLE "invisible"
 
+typedef struct {
+  const gchar *code_bg, *code_fg;
+  const gchar *block_bg, *block_fg;
+  const gchar *quote_fg, *link_fg, *rule_fg;
+} ThemePalette;
+
+static const ThemePalette palette_dark = {
+    "#3E4451", "#E06C75", "#2C313A", "#ABB2BF", "#5C6370", "#61AFEF", "#5C6370"};
+static const ThemePalette palette_light = {
+    "#EFF1F3", "#1F2328", "#F6F8FA", "#1F2328", "#57606A", "#0969DA", "#8C959F"};
+
 static gboolean is_code_fence_line(const gchar *line, gboolean in_code_block);
 
 gboolean markdown_parse_task(const gchar *line, MarkdownTask *task) {
@@ -173,15 +184,12 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
                              NULL);
 
   /* Code content - monospace with background */
-  gtk_text_buffer_create_tag(buffer, TAG_CODE, "family", "Monospace",
-                             "background", "#3E4451", "foreground", "#E06C75",
-                             NULL);
+  gtk_text_buffer_create_tag(buffer, TAG_CODE, "family", "Monospace", NULL);
 
   /* Fenced code block */
   gtk_text_buffer_create_tag(
-      buffer, TAG_CODE_BLOCK, "family", "Monospace", "foreground", "#ABB2BF",
-      "paragraph-background", "#2C313A", "left-margin", 24, "right-margin", 16,
-      NULL);
+      buffer, TAG_CODE_BLOCK, "family", "Monospace", "left-margin", 24,
+      "right-margin", 16, NULL);
 
   gtk_text_buffer_create_tag(buffer, MARKYD_TAG_CODE_KW_A, "family",
                              "Monospace", "foreground", config->h1_color,
@@ -200,8 +208,7 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
 
   /* Quote - Indented and styled */
   gtk_text_buffer_create_tag(buffer, TAG_QUOTE, "left-margin", 24, "style",
-                             PANGO_STYLE_ITALIC, "foreground", "#5C6370",
-                             "paragraph-background", "#2C313A", NULL);
+                             PANGO_STYLE_ITALIC, NULL);
 
   /* List item - indentation */
   gtk_text_buffer_create_tag(buffer, TAG_LIST, "left-margin", 28, NULL);
@@ -212,15 +219,48 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
 
   gtk_text_buffer_create_tag(buffer, TAG_TASK_DONE, "strikethrough", TRUE, NULL);
 
-  /* Link - Blue underlined */
-  gtk_text_buffer_create_tag(buffer, TAG_LINK, "foreground", "#61AFEF",
-                             "underline", PANGO_UNDERLINE_SINGLE, NULL);
+  /* Link - Underlined with a theme-appropriate blue. */
+  gtk_text_buffer_create_tag(buffer, TAG_LINK, "underline",
+                             PANGO_UNDERLINE_SINGLE, NULL);
 
   /* Horizontal rule */
-  gtk_text_buffer_create_tag(buffer, TAG_HRULE, "foreground", "#5C6370",
-                             "justification", GTK_JUSTIFY_CENTER,
+  gtk_text_buffer_create_tag(buffer, TAG_HRULE, "justification", GTK_JUSTIFY_CENTER,
                              "pixels-above-lines", 6, "pixels-below-lines", 6,
                              NULL);
+
+  markdown_update_theme_tags(buffer, g_strcmp0(config->theme, "dark") == 0);
+}
+
+static void set_tag_colors(GtkTextTagTable *table, const gchar *name,
+                           const gchar *foreground,
+                           const gchar *background_property,
+                           const gchar *background) {
+  GtkTextTag *tag = gtk_text_tag_table_lookup(table, name);
+  if (!tag) {
+    return;
+  }
+  g_object_set(tag, "foreground", foreground, NULL);
+  if (background_property) {
+    g_object_set(tag, background_property, background, NULL);
+  }
+}
+
+void markdown_update_theme_tags(GtkTextBuffer *buffer, gboolean dark) {
+  if (!buffer) {
+    return;
+  }
+  config_apply_theme_defaults(config, dark);
+  const ThemePalette *palette = dark ? &palette_dark : &palette_light;
+  GtkTextTagTable *table = gtk_text_buffer_get_tag_table(buffer);
+
+  set_tag_colors(table, TAG_CODE, palette->code_fg, "background", palette->code_bg);
+  set_tag_colors(table, TAG_CODE_BLOCK, palette->block_fg, "paragraph-background",
+                  palette->block_bg);
+  set_tag_colors(table, TAG_QUOTE, palette->quote_fg, "paragraph-background",
+                  palette->block_bg);
+  set_tag_colors(table, TAG_LINK, palette->link_fg, NULL, NULL);
+  set_tag_colors(table, TAG_HRULE, palette->rule_fg, NULL, NULL);
+  markdown_update_accent_tags(buffer);
 }
 
 void markdown_update_accent_tags(GtkTextBuffer *buffer) {
@@ -751,7 +791,7 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
       gtk_text_buffer_get_iter_at_offset(buffer, &syntax_end, line_offset + 2);
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &line_start,
                                         &syntax_end);
-      gtk_text_buffer_apply_tag_by_name(buffer, TAG_QUOTE, &syntax_end,
+      gtk_text_buffer_apply_tag_by_name(buffer, TAG_QUOTE, &line_start,
                                         &line_end);
     }
     /* Keep the task syntax in the buffer and render a checkbox at its marker. */

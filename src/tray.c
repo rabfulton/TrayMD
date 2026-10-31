@@ -155,21 +155,27 @@ static void on_settings_activate(GtkMenuItem *item, gpointer user_data) {
   MarkydApp *app = (MarkydApp *)user_data;
   GtkWidget *dialog;
   gint response;
+  MarkydConfig *previous = config;
 
   (void)item;
 
+  /* Edit a copy so Cancel also restores custom/default color choices. */
+  config = config_copy(previous);
   dialog = create_settings_dialog(app);
   response = gtk_dialog_run(GTK_DIALOG(dialog));
+  gtk_widget_destroy(dialog);
 
   if (response == GTK_RESPONSE_APPLY || response == GTK_RESPONSE_OK) {
-    /* Settings are applied in the dialog callbacks */
-    config_save(config);
+    config_free(previous);
     markyd_window_apply_css(app->window);
     markdown_update_accent_tags(app->editor->buffer);
     markyd_editor_refresh(app->editor);
+    config_save(config);
+  } else {
+    config_free(config);
+    config = previous;
+    markyd_window_apply_css(app->window);
   }
-
-  gtk_widget_destroy(dialog);
 }
 
 static void on_quit_activate(GtkMenuItem *item, gpointer user_data) {
@@ -242,6 +248,14 @@ static void set_autostart_enabled(gboolean enabled) {
 }
 
 /* Settings dialog implementation */
+typedef struct {
+  MarkydAccent accent;
+  GtkWidget *button;
+  GtkWidget *use_default;
+} AccentControls;
+
+static void refresh_accent_controls(GPtrArray *controls);
+
 static void on_font_size_changed(GtkSpinButton *spin, gpointer user_data) {
   (void)user_data;
   config->font_size = gtk_spin_button_get_value_as_int(spin);
@@ -254,9 +268,18 @@ static void on_font_family_changed(GtkComboBoxText *combo, gpointer user_data) {
 }
 
 static void on_theme_changed(GtkComboBoxText *combo, gpointer user_data) {
-  (void)user_data;
   g_free(config->theme);
   config->theme = gtk_combo_box_text_get_active_text(combo);
+  gboolean dark = config->dark_palette;
+  if (g_strcmp0(config->theme, "system") == 0) {
+    GdkRGBA base;
+    if (gtk_style_context_lookup_color(gtk_widget_get_style_context(GTK_WIDGET(combo)),
+                                       "theme_base_color", &base)) {
+      dark = (0.2126 * base.red + 0.7152 * base.green + 0.0722 * base.blue) < 0.5;
+    }
+  }
+  config_apply_theme_defaults(config, dark);
+  refresh_accent_controls(user_data);
 }
 
 static gchar *rgba_to_hex(const GdkRGBA *rgba) {
@@ -274,12 +297,36 @@ static void init_color_button(GtkColorButton *btn, const gchar *color_str) {
 }
 
 static void on_color_set(GtkColorButton *btn, gpointer user_data) {
-  gchar **target = (gchar **)user_data;
+  AccentControls *controls = user_data;
   GdkRGBA rgba;
 
   gtk_color_chooser_get_rgba(GTK_COLOR_CHOOSER(btn), &rgba);
-  g_free(*target);
-  *target = rgba_to_hex(&rgba);
+  gchar *color = rgba_to_hex(&rgba);
+  config_set_accent(config, controls->accent, color);
+  g_free(color);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(controls->use_default), FALSE);
+}
+
+static void on_accent_default_toggled(GtkToggleButton *toggle, gpointer user_data) {
+  AccentControls *controls = user_data;
+  gboolean automatic = gtk_toggle_button_get_active(toggle);
+  if (automatic) {
+    config_reset_accent(config, controls->accent);
+  } else {
+    config_set_accent(config, controls->accent,
+                       config_get_accent(config, controls->accent));
+  }
+  init_color_button(GTK_COLOR_BUTTON(controls->button),
+                     config_get_accent(config, controls->accent));
+  gtk_widget_set_sensitive(controls->button, !automatic);
+}
+
+static void refresh_accent_controls(GPtrArray *controls) {
+  for (guint i = 0; i < controls->len; i++) {
+    AccentControls *row = g_ptr_array_index(controls, i);
+    init_color_button(GTK_COLOR_BUTTON(row->button),
+                       config_get_accent(config, row->accent));
+  }
 }
 
 static void on_autostart_toggled(GtkToggleButton *toggle, gpointer user_data) {
@@ -296,16 +343,15 @@ static GtkWidget *create_settings_dialog(MarkydApp *app) {
   GtkWidget *font_size_spin;
   GtkWidget *theme_combo;
   GtkWidget *autostart_check;
-  GtkWidget *h1_color_btn;
-  GtkWidget *h2_color_btn;
-  GtkWidget *h3_color_btn;
-  GtkWidget *bullet_color_btn;
+  GPtrArray *accent_controls = g_ptr_array_new_with_free_func(g_free);
   gint row = 0;
 
   dialog = gtk_dialog_new_with_buttons(
       "TrayMD Settings", GTK_WINDOW(app->window->window),
       GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT, "_Cancel",
       GTK_RESPONSE_CANCEL, "_Apply", GTK_RESPONSE_APPLY, NULL);
+  g_object_set_data_full(G_OBJECT(dialog), "accent-controls", accent_controls,
+                         (GDestroyNotify)g_ptr_array_unref);
 
   gtk_window_set_default_size(GTK_WINDOW(dialog), 400, -1);
 
@@ -337,7 +383,6 @@ static GtkWidget *create_settings_dialog(MarkydApp *app) {
   else
     gtk_combo_box_set_active(GTK_COMBO_BOX(theme_combo), 0);
 
-  g_signal_connect(theme_combo, "changed", G_CALLBACK(on_theme_changed), NULL);
   gtk_widget_set_hexpand(theme_combo, TRUE);
   gtk_grid_attach(GTK_GRID(grid), theme_combo, 1, row++, 1, 1);
 
@@ -393,46 +438,28 @@ static GtkWidget *create_settings_dialog(MarkydApp *app) {
   gtk_grid_attach(GTK_GRID(grid), separator, 0, row++, 2, 1);
 
   /* Markdown accent colors */
-  label = gtk_label_new("Heading 1:");
-  gtk_widget_set_halign(label, GTK_ALIGN_END);
-  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-  h1_color_btn = gtk_color_button_new();
-  init_color_button(GTK_COLOR_BUTTON(h1_color_btn), config->h1_color);
-  gtk_widget_set_halign(h1_color_btn, GTK_ALIGN_START);
-  g_signal_connect(h1_color_btn, "color-set", G_CALLBACK(on_color_set),
-                   &config->h1_color);
-  gtk_grid_attach(GTK_GRID(grid), h1_color_btn, 1, row++, 1, 1);
-
-  label = gtk_label_new("Heading 2:");
-  gtk_widget_set_halign(label, GTK_ALIGN_END);
-  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-  h2_color_btn = gtk_color_button_new();
-  init_color_button(GTK_COLOR_BUTTON(h2_color_btn), config->h2_color);
-  gtk_widget_set_halign(h2_color_btn, GTK_ALIGN_START);
-  g_signal_connect(h2_color_btn, "color-set", G_CALLBACK(on_color_set),
-                   &config->h2_color);
-  gtk_grid_attach(GTK_GRID(grid), h2_color_btn, 1, row++, 1, 1);
-
-  label = gtk_label_new("Heading 3:");
-  gtk_widget_set_halign(label, GTK_ALIGN_END);
-  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-  h3_color_btn = gtk_color_button_new();
-  init_color_button(GTK_COLOR_BUTTON(h3_color_btn), config->h3_color);
-  gtk_widget_set_halign(h3_color_btn, GTK_ALIGN_START);
-  g_signal_connect(h3_color_btn, "color-set", G_CALLBACK(on_color_set),
-                   &config->h3_color);
-  gtk_grid_attach(GTK_GRID(grid), h3_color_btn, 1, row++, 1, 1);
-
-  label = gtk_label_new("List bullet:");
-  gtk_widget_set_halign(label, GTK_ALIGN_END);
-  gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
-  bullet_color_btn = gtk_color_button_new();
-  init_color_button(GTK_COLOR_BUTTON(bullet_color_btn),
-                    config->list_bullet_color);
-  gtk_widget_set_halign(bullet_color_btn, GTK_ALIGN_START);
-  g_signal_connect(bullet_color_btn, "color-set", G_CALLBACK(on_color_set),
-                   &config->list_bullet_color);
-  gtk_grid_attach(GTK_GRID(grid), bullet_color_btn, 1, row++, 1, 1);
+  const gchar *accent_labels[] = {"Heading 1:", "Heading 2:", "Heading 3:", "List bullet:"};
+  for (gint i = 0; i < MARKYD_ACCENT_COUNT; i++) {
+    AccentControls *controls = g_new0(AccentControls, 1);
+    controls->accent = i;
+    controls->button = gtk_color_button_new();
+    controls->use_default = gtk_check_button_new_with_label("Use theme default");
+    g_ptr_array_add(accent_controls, controls);
+    init_color_button(GTK_COLOR_BUTTON(controls->button), config_get_accent(config, i));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(controls->use_default),
+                                   !config->accent_custom[i]);
+    gtk_widget_set_sensitive(controls->button, config->accent_custom[i]);
+    gtk_widget_set_halign(controls->button, GTK_ALIGN_START);
+    label = gtk_label_new(accent_labels[i]);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), controls->button, 1, row, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), controls->use_default, 2, row++, 1, 1);
+    g_signal_connect(controls->button, "color-set", G_CALLBACK(on_color_set), controls);
+    g_signal_connect(controls->use_default, "toggled",
+                     G_CALLBACK(on_accent_default_toggled), controls);
+  }
+  g_signal_connect(theme_combo, "changed", G_CALLBACK(on_theme_changed), accent_controls);
 
   /* Separator */
   separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
