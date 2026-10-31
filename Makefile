@@ -17,9 +17,15 @@ bindir ?= $(PREFIX)/bin
 datadir ?= $(PREFIX)/share
 applicationsdir ?= $(datadir)/applications
 
-.PHONY: all clean install uninstall
+.PHONY: all clean install uninstall test
 
 all: $(TARGET)
+
+$(OBJDIR)/test-tasks: tests/test_tasks.c $(SRCDIR)/editor.c $(SRCDIR)/markdown.c $(SRCDIR)/code_highlight.c $(SRCDIR)/config.c $(SRCDIR)/window.c $(wildcard $(SRCDIR)/*.h) | $(OBJDIR)
+	$(CC) $(CFLAGS) -I$(SRCDIR) $(filter %.c,$^) -o $@ $(LDFLAGS)
+
+test: $(OBJDIR)/test-tasks
+	$(OBJDIR)/test-tasks
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)

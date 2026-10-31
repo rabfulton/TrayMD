@@ -25,11 +25,18 @@ A lightweight GTK 3 notes application for Linux system trays, supporting live ed
 | `` `code` `` | Inline code |
 | <code>```...```</code> | Code block |
 | `- item` | List item |
+| `- [ ] task` | Unchecked task with a clickable checkbox |
+| `- [x] task` | Completed task with strikethrough text |
 | `> quote` | Block quote |
 | `[text](url)` | Link |
 | `---` | Horizontal rule |
 
 Code blocks currently support a beta version of keyword highlighting for fenced languages `c`, `java`, and `python`.
+
+Task lists also accept `*` and `+` bullets, indentation, and uppercase `[X]`.
+Click a checkbox to toggle completion. Press Enter to continue with a new unchecked
+task, or press Enter on an empty task to end the list. Task states are saved as
+plain Markdown.
 
 ## Installation
 
@@ -79,6 +86,8 @@ Notes are stored in `~/.local/share/traymd/notes/` as plain markdown files.
 make
 sudo make install
 ```
+
+Run `make test` to run the GTK editor regression tests (requires a display).
 
 This installs:
 - Binary to `/usr/local/bin/traymd`

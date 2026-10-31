@@ -197,6 +197,35 @@ void markyd_window_apply_css(MarkydWindow *self) {
       "textview text selection {"
       "  background-color: %s;"
       "}"
+      "textview checkbutton.traymd-task {"
+      "  padding: 0;"
+      "  min-width: 0;"
+      "  min-height: 0;"
+      "  font-size: inherit;"
+      "  color: %s;"
+      "  border: none;"
+      "  background: none;"
+      "  box-shadow: none;"
+      "}"
+      "textview checkbutton.traymd-task check {"
+      "  min-width: 0.75em;"
+      "  min-height: 0.75em;"
+      "  padding: 0;"
+      "  margin: 0;"
+      "  border: 1px solid %s;"
+      "  border-radius: 2px;"
+      "  background-image: none;"
+      "  background-color: %s;"
+      "  color: %s;"
+      "  box-shadow: none;"
+      "  -gtk-icon-shadow: none;"
+      "  -gtk-icon-source: none;"
+      "}"
+      "textview checkbutton.traymd-task check:checked {"
+      "  background-color: %s;"
+      "  color: %s;"
+      "  -gtk-icon-source: -gtk-icontheme('object-select-symbolic');"
+      "}"
       "scrolledwindow {"
       "  background-color: %s;"
       "  border: none;"
@@ -204,8 +233,9 @@ void markyd_window_apply_css(MarkydWindow *self) {
       "window {"
       "  background-color: %s;"
       "}",
-      config->font_family, config->font_size, bg, fg, fg, bg, fg, fg, sel_bg, bg,
-      bg);
+      config->font_family, config->font_size, bg, fg, fg, bg, fg, fg, sel_bg,
+      config->list_bullet_color, config->list_bullet_color, bg,
+      config->list_bullet_color, config->list_bullet_color, bg, bg, bg);
 
   gtk_css_provider_load_from_data(css, css_str, -1, NULL);
   g_free(css_str);

@@ -15,9 +15,64 @@
 #define TAG_QUOTE "quote"
 #define TAG_LIST "list"
 #define TAG_LIST_BULLET "list_bullet"
+#define TAG_TASK_DONE "task_done"
 #define TAG_LINK "link"
 #define TAG_HRULE "hrule"
 #define TAG_INVISIBLE "invisible"
+
+static gboolean is_code_fence_line(const gchar *line, gboolean in_code_block);
+
+gboolean markdown_parse_task(const gchar *line, MarkdownTask *task) {
+  const gchar *p;
+  MarkdownTask parsed;
+
+  if (!line) {
+    return FALSE;
+  }
+  p = line;
+  while (*p == ' ' || *p == '\t') {
+    p++;
+  }
+  if (*p == '-' || *p == '*' || *p == '+') {
+    p++;
+  } else if (g_str_has_prefix(p, "•")) {
+    p = g_utf8_next_char(p);
+  } else {
+    return FALSE;
+  }
+  if (*p != ' ' && *p != '\t') {
+    return FALSE;
+  }
+  while (*p == ' ' || *p == '\t') {
+    p++;
+  }
+  if (p[0] != '[' || (p[1] != ' ' && p[1] != 'x' && p[1] != 'X') ||
+      p[2] != ']' || (p[3] != '\0' && p[3] != ' ' && p[3] != '\t')) {
+    return FALSE;
+  }
+
+  parsed.marker_offset = g_utf8_pointer_to_offset(line, p);
+  parsed.checked = p[1] != ' ';
+  p += 3;
+  if (*p == ' ' || *p == '\t') {
+    p++;
+  }
+  parsed.content_offset = g_utf8_pointer_to_offset(line, p);
+  if (task) {
+    *task = parsed;
+  }
+  return TRUE;
+}
+
+typedef struct {
+  gint offset;
+  gboolean task;
+  gboolean checked;
+} RenderAnchor;
+
+static gint compare_anchor_desc(gconstpointer a, gconstpointer b) {
+  return ((const RenderAnchor *)b)->offset - ((const RenderAnchor *)a)->offset;
+}
 
 static void collect_anchor_offsets(GtkTextBuffer *buffer, const gchar *data_key,
                                    GArray *offsets) {
@@ -31,6 +86,37 @@ static void collect_anchor_offsets(GtkTextBuffer *buffer, const gchar *data_key,
       g_array_append_val(offsets, offset);
     }
     gtk_text_iter_forward_char(&iter);
+  }
+}
+
+/* Keep valid task anchors in place so clicks and edits retain the same widget. */
+static void collect_stale_task_offsets(GtkTextBuffer *buffer, GArray *offsets) {
+  GtkTextIter line_start;
+  gboolean in_code_block = FALSE;
+
+  gtk_text_buffer_get_start_iter(buffer, &line_start);
+  while (!gtk_text_iter_is_end(&line_start)) {
+    GtkTextIter line_end = line_start;
+    gtk_text_iter_forward_to_line_end(&line_end);
+    gchar *text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, TRUE);
+    if (is_code_fence_line(text, in_code_block)) {
+      in_code_block = !in_code_block;
+    }
+    gboolean valid_task = !in_code_block && markdown_parse_task(text, NULL);
+    GtkTextIter iter = line_start;
+    while (gtk_text_iter_compare(&iter, &line_end) < 0) {
+      GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
+      if (anchor && g_object_get_data(G_OBJECT(anchor), TRAYMD_TASK_ANCHOR_DATA) &&
+          (!valid_task || !gtk_text_iter_equal(&iter, &line_start))) {
+        gint offset = gtk_text_iter_get_offset(&iter);
+        g_array_append_val(offsets, offset);
+      }
+      gtk_text_iter_forward_char(&iter);
+    }
+    g_free(text);
+    if (!gtk_text_iter_forward_line(&line_start)) {
+      break;
+    }
   }
 }
 
@@ -52,7 +138,8 @@ static void delete_char_offsets(GtkTextBuffer *buffer, GArray *offsets) {
 
     gtk_text_buffer_get_iter_at_offset(buffer, &start, offset);
     end = start;
-    if (gtk_text_iter_forward_char(&end)) {
+    if (!gtk_text_iter_is_end(&start)) {
+      gtk_text_iter_forward_char(&end);
       gtk_text_buffer_delete(buffer, &start, &end);
     }
   }
@@ -122,6 +209,8 @@ void markdown_init_tags(GtkTextBuffer *buffer) {
   /* List bullet styling */
   gtk_text_buffer_create_tag(buffer, TAG_LIST_BULLET, "foreground",
                              config->list_bullet_color, NULL);
+
+  gtk_text_buffer_create_tag(buffer, TAG_TASK_DONE, "strikethrough", TRUE, NULL);
 
   /* Link - Blue underlined */
   gtk_text_buffer_create_tag(buffer, TAG_LINK, "foreground", "#61AFEF",
@@ -563,7 +652,7 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
   GtkTextIter insert_iter;
   GtkTextMark *insert_mark;
   gchar *line_text;
-  GArray *hrule_offsets;
+  GArray *render_anchors;
   GArray *old_anchor_offsets;
   gboolean in_code_block = FALSE;
   const MarkydLanguageHighlight *code_language = NULL;
@@ -576,6 +665,7 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
    */
   old_anchor_offsets = g_array_new(FALSE, FALSE, sizeof(gint));
   collect_anchor_offsets(buffer, TRAYMD_HRULE_ANCHOR_DATA, old_anchor_offsets);
+  collect_stale_task_offsets(buffer, old_anchor_offsets);
   delete_char_offsets(buffer, old_anchor_offsets);
   g_array_free(old_anchor_offsets, TRUE);
 
@@ -590,20 +680,29 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     gtk_text_buffer_get_iter_at_mark(buffer, &insert_iter, insert_mark);
     insert_line = gtk_text_iter_get_line(&insert_iter);
   }
-  hrule_offsets = g_array_new(FALSE, FALSE, sizeof(gint));
+  render_anchors = g_array_new(FALSE, FALSE, sizeof(RenderAnchor));
 
   while (!gtk_text_iter_is_end(&line_start)) {
     GtkTextIter syntax_end;
-    gint line_offset = gtk_text_iter_get_offset(&line_start);
+    GtkTextIter source_start = line_start;
+    GtkTextChildAnchor *task_anchor = gtk_text_iter_get_child_anchor(&line_start);
+    if (task_anchor &&
+        g_object_get_data(G_OBJECT(task_anchor), TRAYMD_TASK_ANCHOR_DATA)) {
+      gtk_text_iter_forward_char(&source_start);
+    } else {
+      task_anchor = NULL;
+    }
+    gint line_offset = gtk_text_iter_get_offset(&source_start);
     gint line_number = gtk_text_iter_get_line(&line_start);
     gboolean active_line = (line_number == insert_line);
     gboolean line_has_trailing_newline = FALSE;
+    MarkdownTask task;
 
     line_end = line_start;
     gtk_text_iter_forward_to_line_end(&line_end);
     line_has_trailing_newline = !gtk_text_iter_is_end(&line_end);
 
-    line_text = gtk_text_buffer_get_text(buffer, &line_start, &line_end, FALSE);
+    line_text = gtk_text_buffer_get_text(buffer, &source_start, &line_end, FALSE);
 
     if (is_code_fence_line(line_text, in_code_block)) {
       if (!in_code_block) {
@@ -655,6 +754,29 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
       gtk_text_buffer_apply_tag_by_name(buffer, TAG_QUOTE, &syntax_end,
                                         &line_end);
     }
+    /* Keep the task syntax in the buffer and render a checkbox at its marker. */
+    else if (markdown_parse_task(line_text, &task)) {
+      GtkTextIter content_start;
+      RenderAnchor anchor = {line_offset, TRUE, task.checked};
+      gtk_text_buffer_get_iter_at_offset(buffer, &content_start,
+                                         line_offset + task.content_offset);
+      gtk_text_buffer_get_iter_at_offset(buffer, &syntax_end,
+                                         line_offset + task.marker_offset + 3);
+      gtk_text_buffer_apply_tag_by_name(buffer, TAG_LIST, &line_start, &line_end);
+      gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &source_start,
+                                        &syntax_end);
+      if (task.checked) {
+        gtk_text_buffer_apply_tag_by_name(buffer, TAG_TASK_DONE, &content_start,
+                                          &line_end);
+      }
+      apply_inline_tags(buffer, &content_start, &line_end);
+      if (task_anchor) {
+        g_object_set_data(G_OBJECT(task_anchor), TRAYMD_TASK_ANCHOR_DATA,
+                          GINT_TO_POINTER(task.checked ? 2 : 1));
+      } else {
+        g_array_append_val(render_anchors, anchor);
+      }
+    }
     /* List item - style the bullet, hide and replace with bullet character */
     else if (line_starts_with(line_text, "- ") ||
              line_starts_with(line_text, "* ") ||
@@ -698,7 +820,8 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
                                         &line_end);
 
       /* Record for anchor insertion after this scan completes. */
-      g_array_append_val(hrule_offsets, line_offset);
+      RenderAnchor anchor = {line_offset, FALSE, FALSE};
+      g_array_append_val(render_anchors, anchor);
     }
     /* Regular line - apply inline formatting */
     else {
@@ -713,27 +836,36 @@ void markdown_apply_tags(GtkTextBuffer *buffer) {
     }
   }
 
-  /* Insert hrule anchors from end to start so offsets stay valid. */
-  if (hrule_offsets->len > 0) {
-    g_array_sort(hrule_offsets, compare_int_desc);
-    for (guint i = 0; i < hrule_offsets->len; i++) {
-      gint offset = g_array_index(hrule_offsets, gint, i);
+  /* Insert all widget anchors from end to start so offsets stay valid. */
+  if (render_anchors->len > 0) {
+    g_array_sort(render_anchors, compare_anchor_desc);
+    for (guint i = 0; i < render_anchors->len; i++) {
+      RenderAnchor render = g_array_index(render_anchors, RenderAnchor, i);
       GtkTextIter anchor_pos;
       GtkTextChildAnchor *anchor;
 
-      gtk_text_buffer_get_iter_at_offset(buffer, &anchor_pos, offset);
+      gtk_text_buffer_get_iter_at_offset(buffer, &anchor_pos, render.offset);
       anchor = gtk_text_buffer_create_child_anchor(buffer, &anchor_pos);
-      g_object_set_data(G_OBJECT(anchor), TRAYMD_HRULE_ANCHOR_DATA,
-                        GINT_TO_POINTER(1));
+      g_object_set_data(G_OBJECT(anchor), render.task ? TRAYMD_TASK_ANCHOR_DATA
+                                                    : TRAYMD_HRULE_ANCHOR_DATA,
+                        GINT_TO_POINTER(render.checked ? 2 : 1));
 
-      /* Hide the anchor's object character so it doesn't show up/capture layout. */
+      /* Task widgets need a visible anchor; hrules hide their object character. */
+      gtk_text_buffer_get_iter_at_child_anchor(buffer, &anchor_pos, anchor);
       GtkTextIter astart = anchor_pos;
       GtkTextIter aend = anchor_pos;
       if (gtk_text_iter_forward_char(&aend)) {
-        gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &astart, &aend);
+        if (render.task) {
+          gtk_text_buffer_remove_tag_by_name(buffer, TAG_INVISIBLE, &astart,
+                                             &aend);
+          gtk_text_buffer_apply_tag_by_name(buffer, TAG_LIST, &astart, &aend);
+        } else {
+          gtk_text_buffer_apply_tag_by_name(buffer, TAG_INVISIBLE, &astart,
+                                            &aend);
+        }
       }
     }
   }
 
-  g_array_free(hrule_offsets, TRUE);
+  g_array_free(render_anchors, TRUE);
 }

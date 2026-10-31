@@ -24,6 +24,17 @@ static void on_paste_clipboard_after(GtkTextView *text_view, gpointer user_data)
 static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
+static void on_editor_style_updated(GtkWidget *widget, gpointer user_data) {
+  (void)user_data;
+  PangoLayout *layout = gtk_widget_create_pango_layout(widget, "Mg");
+  gint line_height;
+  pango_layout_get_pixel_size(layout, NULL, &line_height);
+  g_object_unref(layout);
+
+  /* Reserve one line below the viewport, including while GTK scrolls the caret. */
+  gtk_widget_set_margin_bottom(widget, MAX(line_height, 1));
+}
+
 static const gunichar UNORDERED_LIST_BULLET = 0x2022; /* '•' */
 
 static gint compare_int_desc(gconstpointer a, gconstpointer b) {
@@ -40,33 +51,6 @@ static gchar *gstring_steal_compat(GString *string) {
   gchar *out = g_strdup(string->str);
   g_string_free(string, TRUE);
   return out;
-}
-
-static gchar *markdown_to_display_text(const gchar *content) {
-  if (!content) {
-    return g_strdup("");
-  }
-
-  GString *out = g_string_sized_new(strlen(content));
-  const gchar *p = content;
-  gboolean at_line_start = TRUE;
-
-  while (*p) {
-    if (at_line_start && (p[0] == '-' || p[0] == '*') && p[1] == ' ') {
-      g_string_append_unichar(out, UNORDERED_LIST_BULLET);
-      g_string_append_c(out, ' ');
-      p += 2;
-      at_line_start = FALSE;
-      continue;
-    }
-
-    gunichar c = g_utf8_get_char(p);
-    g_string_append_unichar(out, c);
-    at_line_start = (c == '\n');
-    p = g_utf8_next_char(p);
-  }
-
-  return gstring_steal_compat(out);
 }
 
 static gchar *display_to_markdown_text(const gchar *content) {
@@ -228,6 +212,10 @@ static void normalize_list_markers(MarkydEditor *self) {
 
   while (!gtk_text_iter_is_end(&line_start)) {
     gint offset = gtk_text_iter_get_offset(&line_start);
+    GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&line_start);
+    if (anchor && g_object_get_data(G_OBJECT(anchor), TRAYMD_TASK_ANCHOR_DATA)) {
+      offset++;
+    }
     GtkTextIter line_end = line_start;
     gchar *line_text;
 
@@ -238,7 +226,7 @@ static void normalize_list_markers(MarkydEditor *self) {
       in_code_block = !in_code_block;
     } else if (!in_code_block && line_text[0] != '\0' &&
                (line_text[0] == '-' || line_text[0] == '*') &&
-               line_text[1] == ' ') {
+               line_text[1] == ' ' && !markdown_parse_task(line_text, NULL)) {
       g_array_append_val(offsets, offset);
     }
     g_free(line_text);
@@ -391,6 +379,71 @@ static void render_hrules(MarkydEditor *self) {
   on_text_view_size_allocate(self->text_view, &allocation, self);
 }
 
+static void on_task_toggled(GtkToggleButton *button, gpointer user_data) {
+  MarkydEditor *self = user_data;
+  GtkTextChildAnchor *anchor =
+      g_object_get_data(G_OBJECT(button), TRAYMD_TASK_ANCHOR_DATA);
+  GtkTextIter start, end;
+
+  if (!anchor || gtk_text_child_anchor_get_deleted(anchor)) {
+    return;
+  }
+
+  /* The anchor precedes the hidden task prefix; change only its state. */
+  gtk_text_buffer_get_iter_at_child_anchor(self->buffer, &start, anchor);
+  end = start;
+  gtk_text_iter_forward_to_line_end(&end);
+  gchar *line = gtk_text_buffer_get_text(self->buffer, &start, &end, TRUE);
+  MarkdownTask task;
+  gboolean valid = markdown_parse_task(line, &task);
+  g_free(line);
+  if (!valid) {
+    return;
+  }
+  gtk_text_iter_forward_chars(&start, task.marker_offset + 2);
+  end = start;
+  gtk_text_iter_forward_char(&end);
+  gtk_text_buffer_begin_user_action(self->buffer);
+  gtk_text_buffer_delete(self->buffer, &start, &end);
+  gtk_text_buffer_insert(self->buffer, &start,
+                         gtk_toggle_button_get_active(button) ? "x" : " ", 1);
+  gtk_text_buffer_end_user_action(self->buffer);
+}
+
+static void render_tasks(MarkydEditor *self) {
+  GtkTextIter iter, end;
+
+  gtk_text_buffer_get_bounds(self->buffer, &iter, &end);
+  while (!gtk_text_iter_equal(&iter, &end)) {
+    GtkTextChildAnchor *anchor = gtk_text_iter_get_child_anchor(&iter);
+    if (anchor) {
+      gint state = GPOINTER_TO_INT(
+          g_object_get_data(G_OBJECT(anchor), TRAYMD_TASK_ANCHOR_DATA));
+      if (state) {
+        GtkWidget *check = g_object_get_data(G_OBJECT(anchor), "task-widget");
+        if (!check) {
+          check = gtk_check_button_new();
+          gtk_style_context_add_class(gtk_widget_get_style_context(check),
+                                       "traymd-task");
+          gtk_widget_set_focus_on_click(check, FALSE);
+          gtk_widget_set_margin_end(check, 4);
+          atk_object_set_name(gtk_widget_get_accessible(check), "Task complete");
+          g_object_set_data(G_OBJECT(check), TRAYMD_TASK_ANCHOR_DATA, anchor);
+          g_object_set_data(G_OBJECT(anchor), "task-widget", check);
+          g_signal_connect(check, "toggled", G_CALLBACK(on_task_toggled), self);
+          gtk_text_view_add_child_at_anchor(GTK_TEXT_VIEW(self->text_view), check,
+                                            anchor);
+          gtk_widget_show(check);
+        }
+        g_signal_handlers_block_by_func(check, on_task_toggled, self);
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check), state == 2);
+        g_signal_handlers_unblock_by_func(check, on_task_toggled, self);
+      }
+    }
+    gtk_text_iter_forward_char(&iter);
+  }
+}
+
 static void apply_markdown(MarkydEditor *self) {
   if (!self) {
     return;
@@ -400,6 +453,7 @@ static void apply_markdown(MarkydEditor *self) {
   normalize_list_markers(self);
   markdown_apply_tags(self->buffer);
   render_hrules(self);
+  render_tasks(self);
   self->updating_tags = FALSE;
 }
 
@@ -455,6 +509,9 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
   gtk_text_view_set_right_margin(GTK_TEXT_VIEW(self->text_view), 16);
   gtk_text_view_set_top_margin(GTK_TEXT_VIEW(self->text_view), 16);
   gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(self->text_view), 16);
+  g_signal_connect(self->text_view, "style-updated",
+                   G_CALLBACK(on_editor_style_updated), NULL);
+  on_editor_style_updated(self->text_view, NULL);
 
   /* Get buffer and init markdown tags */
   self->buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(self->text_view));
@@ -523,13 +580,11 @@ void markyd_editor_free(MarkydEditor *self) {
 }
 
 void markyd_editor_set_content(MarkydEditor *self, const gchar *content) {
-  gchar *display = markdown_to_display_text(content);
   self->updating_tags = TRUE;
-  gtk_text_buffer_set_text(self->buffer, display ? display : "", -1);
+  gtk_text_buffer_set_text(self->buffer, content ? content : "", -1);
   self->updating_tags = FALSE;
-  g_free(display);
 
-  /* Apply markdown formatting */
+  /* Normalize display bullets along with formatting, outside code blocks. */
   schedule_markdown_apply(self);
 }
 
@@ -595,6 +650,11 @@ static gboolean is_empty_list_item(const gchar *line) {
 
   const gchar *bullet_prefix = "• ";
   const gsize bullet_prefix_len = strlen(bullet_prefix);
+  MarkdownTask task;
+
+  if (markdown_parse_task(line, &task)) {
+    return is_all_ascii_space(g_utf8_offset_to_pointer(line, task.content_offset));
+  }
 
   /* Unordered list: "- " or "* " with nothing after */
   if ((line[0] == '-' || line[0] == '*') && line[1] == ' ') {
@@ -625,6 +685,18 @@ static gchar *get_next_list_prefix(const gchar *line) {
 
   const gchar *bullet_prefix = "• ";
   const gsize bullet_prefix_len = strlen(bullet_prefix);
+  MarkdownTask task;
+
+  if (markdown_parse_task(line, &task)) {
+    if (is_empty_list_item(line)) {
+      return NULL;
+    }
+    const gchar *marker = g_utf8_offset_to_pointer(line, task.marker_offset);
+    gchar *list_prefix = g_strndup(line, marker - line);
+    gchar *prefix = g_strconcat(list_prefix, "[ ] ", NULL);
+    g_free(list_prefix);
+    return prefix;
+  }
 
   /* Unordered list: "- " or "* " */
   if ((line[0] == '-' || line[0] == '*') && line[1] == ' ') {
@@ -827,6 +899,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
       self->markdown_idle_id = 0;
     }
     apply_markdown(self);
+    markyd_app_schedule_save(self->app);
     gtk_widget_queue_draw(self->text_view);
     g_free(line_text);
     return TRUE;
@@ -837,8 +910,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
     return FALSE;
   }
 
-  /* First check: is this an empty list item? (just "- " or "1. " with no
-   * content) */
+  /* An empty list or task item ends the list. */
   if (is_empty_list_item(line_text)) {
     /* Delete the entire line content (the empty list marker) */
     self->updating_tags = TRUE;
@@ -847,6 +919,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
 
     /* Apply markdown formatting */
     schedule_markdown_apply(self);
+    markyd_app_schedule_save(self->app);
 
     g_free(line_text);
     return TRUE; /* Consume the event - don't add newline, just clear the marker
@@ -871,6 +944,7 @@ static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event,
 
     /* Apply markdown formatting */
     schedule_markdown_apply(self);
+    markyd_app_schedule_save(self->app);
 
     /* Scroll to cursor to keep it visible */
     GtkTextMark *insert_mark = gtk_text_buffer_get_insert(buffer);
