@@ -24,6 +24,11 @@ static void on_delete_range(GtkTextBuffer *buffer, GtkTextIter *start,
                             GtkTextIter *end, gpointer user_data);
 static void on_begin_user_action(GtkTextBuffer *buffer, gpointer user_data);
 static void on_end_user_action(GtkTextBuffer *buffer, gpointer user_data);
+static void on_paste_clipboard(GtkTextView *text_view, gpointer user_data);
+static void on_paste_done(GtkTextBuffer *buffer, GtkClipboard *clipboard,
+                          gpointer user_data);
+static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event,
+                                gpointer user_data);
 static void apply_markdown(MarkydEditor *self);
 static void schedule_markdown_apply(MarkydEditor *self);
 
@@ -501,6 +506,7 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
   self->markdown_idle_id = 0;
   self->undo = markyd_undo_new();
   self->undo_suppress = FALSE;
+  self->paste_pending = FALSE;
 
   /* Create text view */
   self->text_view = gtk_text_view_new();
@@ -532,6 +538,10 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
                    G_CALLBACK(on_begin_user_action), self);
   g_signal_connect(self->buffer, "end-user-action",
                    G_CALLBACK(on_end_user_action), self);
+  g_signal_connect(self->buffer, "paste-done", G_CALLBACK(on_paste_done),
+                   self);
+  g_signal_connect(self->text_view, "paste-clipboard",
+                   G_CALLBACK(on_paste_clipboard), self);
 
   /* Connect to key press for list continuation */
   g_signal_connect(self->text_view, "key-press-event", G_CALLBACK(on_key_press),
@@ -545,6 +555,8 @@ MarkydEditor *markyd_editor_new(MarkydApp *app) {
                                             GDK_LEAVE_NOTIFY_MASK |
                                             GDK_BUTTON_PRESS_MASK |
                                             GDK_BUTTON_RELEASE_MASK);
+  g_signal_connect(self->text_view, "button-press-event",
+                   G_CALLBACK(on_button_press), self);
   g_signal_connect(self->text_view, "button-release-event",
                    G_CALLBACK(on_button_release), self);
   g_signal_connect(self->text_view, "motion-notify-event",
@@ -774,7 +786,9 @@ static void on_insert_text(GtkTextBuffer *buffer, GtkTextIter *location,
 
   chars = (text && len > 0) ? (gint)g_utf8_strlen(text, len) : 0;
   whitespace = (chars == 1) && g_unichar_isspace(g_utf8_get_char(text));
-  boundary = chars > 1 || (chars == 1 && g_utf8_get_char(text) == '\n');
+  boundary = self->paste_pending || chars > 1 ||
+             (chars == 1 && g_utf8_get_char(text) == '\n');
+  self->paste_pending = FALSE;
   start = gtk_text_iter_get_offset(location);
 
   editor_record_edit(self, TRUE, start, start + chars, whitespace, boundary);
@@ -786,16 +800,20 @@ static void on_delete_range(GtkTextBuffer *buffer, GtkTextIter *start,
   gint start_offset;
   gint end_offset;
   gboolean whitespace;
-
-  (void)buffer;
+  gboolean selection;
+  GtkTextIter sel_start, sel_end;
 
   start_offset = gtk_text_iter_get_offset(start);
   end_offset = gtk_text_iter_get_offset(end);
   whitespace = (end_offset - start_offset == 1) &&
                g_unichar_isspace(gtk_text_iter_get_char(start));
+  selection =
+      gtk_text_buffer_get_selection_bounds(buffer, &sel_start, &sel_end) &&
+      gtk_text_iter_equal(start, &sel_start) &&
+      gtk_text_iter_equal(end, &sel_end);
 
   editor_record_edit(self, FALSE, start_offset, end_offset, whitespace,
-                     FALSE);
+                     selection);
 }
 
 /*
@@ -821,6 +839,38 @@ static void on_end_user_action(GtkTextBuffer *buffer, gpointer user_data) {
   if (self->user_action_depth > 0) {
     self->user_action_depth--;
   }
+}
+
+static void on_paste_clipboard(GtkTextView *text_view, gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+
+  (void)text_view;
+
+  self->paste_pending = TRUE;
+}
+
+static void on_paste_done(GtkTextBuffer *buffer, GtkClipboard *clipboard,
+                          gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+
+  (void)buffer;
+  (void)clipboard;
+
+  self->paste_pending = FALSE;
+}
+
+static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event,
+                                gpointer user_data) {
+  MarkydEditor *self = (MarkydEditor *)user_data;
+
+  (void)widget;
+
+  if (event->type == GDK_BUTTON_PRESS &&
+      event->button == GDK_BUTTON_MIDDLE) {
+    self->paste_pending = TRUE;
+  }
+
+  return FALSE;
 }
 
 /*

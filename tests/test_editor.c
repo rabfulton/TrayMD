@@ -133,6 +133,39 @@ static void test_paste_opens_undo_step(void) {
   free_editor(editor);
 }
 
+static void test_single_char_paste_opens_undo_step(void) {
+  MarkydApp app = {0};
+  MarkydEditor *editor = new_editor(&app, "");
+
+  type_text(editor, "abc");
+  paste(editor, "X");
+  assert_content(editor, "abcX");
+  undo(editor);
+  assert_content(editor, "abc");
+
+  free_editor(editor);
+}
+
+static void test_selection_replace_opens_undo_step(void) {
+  MarkydApp app = {0};
+  MarkydEditor *editor = new_editor(&app, "abc");
+  GtkTextIter start, end;
+
+  move_to_end(editor);
+  gtk_text_buffer_get_end_iter(editor->buffer, &end);
+  gtk_text_buffer_backspace(editor->buffer, &end, TRUE, TRUE);
+  assert_content(editor, "ab");
+  gtk_text_buffer_get_iter_at_offset(editor->buffer, &start, 1);
+  gtk_text_buffer_get_iter_at_offset(editor->buffer, &end, 2);
+  gtk_text_buffer_select_range(editor->buffer, &start, &end);
+  paste(editor, "PASTED");
+  assert_content(editor, "aPASTED");
+  undo(editor);
+  assert_content(editor, "ab");
+
+  free_editor(editor);
+}
+
 static void test_newline_opens_undo_step(void) {
   MarkydApp app = {0};
   MarkydEditor *editor = new_editor(&app, "- abc");
@@ -153,6 +186,10 @@ int main(int argc, char **argv) {
   g_test_add_func("/undo/restore-keeps-code-literal",
                   test_restore_keeps_code_literal);
   g_test_add_func("/undo/paste-opens-step", test_paste_opens_undo_step);
+  g_test_add_func("/undo/single-char-paste-opens-step",
+                  test_single_char_paste_opens_undo_step);
+  g_test_add_func("/undo/selection-replace-opens-step",
+                  test_selection_replace_opens_undo_step);
   g_test_add_func("/undo/newline-opens-step", test_newline_opens_undo_step);
   int result = g_test_run();
   config_free(config);

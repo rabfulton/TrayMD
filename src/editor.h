@@ -28,6 +28,8 @@ typedef struct _MarkydEditor {
    * claimed its undo step. */
   gint user_action_depth;
   gboolean user_action_recorded;
+
+  gboolean paste_pending;
 } MarkydEditor;
 
 /* Lifecycle */
