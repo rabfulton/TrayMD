@@ -21,15 +21,19 @@ applicationsdir ?= $(datadir)/applications
 
 all: $(TARGET)
 
-$(OBJDIR)/test-tasks: tests/test_tasks.c $(SRCDIR)/editor.c $(SRCDIR)/markdown.c $(SRCDIR)/code_highlight.c $(SRCDIR)/config.c $(SRCDIR)/window.c $(wildcard $(SRCDIR)/*.h) | $(OBJDIR)
+$(OBJDIR)/test-tasks: tests/test_tasks.c $(SRCDIR)/editor.c $(SRCDIR)/undo.c $(SRCDIR)/markdown.c $(SRCDIR)/code_highlight.c $(SRCDIR)/config.c $(SRCDIR)/window.c $(wildcard $(SRCDIR)/*.h) | $(OBJDIR)
 	$(CC) $(CFLAGS) -I$(SRCDIR) $(filter %.c,$^) -o $@ $(LDFLAGS) -lm
 
 $(OBJDIR)/test-config: tests/test_config.c $(SRCDIR)/config.c $(SRCDIR)/config.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -I$(SRCDIR) $(filter %.c,$^) -o $@ `pkg-config --libs glib-2.0`
 
-test: $(OBJDIR)/test-config $(OBJDIR)/test-tasks
+$(OBJDIR)/test-editor: tests/test_editor.c $(SRCDIR)/editor.c $(SRCDIR)/undo.c $(SRCDIR)/markdown.c $(SRCDIR)/code_highlight.c $(SRCDIR)/config.c $(SRCDIR)/window.c $(wildcard $(SRCDIR)/*.h) | $(OBJDIR)
+	$(CC) $(CFLAGS) -I$(SRCDIR) $(filter %.c,$^) -o $@ $(LDFLAGS) -lm
+
+test: $(OBJDIR)/test-config $(OBJDIR)/test-tasks $(OBJDIR)/test-editor
 	$(OBJDIR)/test-config
 	$(OBJDIR)/test-tasks
+	$(OBJDIR)/test-editor
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)

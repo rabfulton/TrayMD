@@ -22,20 +22,22 @@ void markyd_undo_clear(MarkydUndo *undo);
  * state Ctrl+Z has to come back to. Offsets are character offsets into the
  * buffer and only steer the grouping. "whitespace" marks an edit of a single
  * space or newline, which ends the step it belongs to, so that typing a
- * sentence undoes word by word.
+ * sentence undoes word by word. "boundary" starts and ends a separate step
+ * for edits such as pastes and line breaks.
  */
 gboolean markyd_undo_needs_step(MarkydUndo *undo, gboolean insert, gint start,
-                                gint end, gboolean whitespace);
-void markyd_undo_push(MarkydUndo *undo, const gchar *markdown, gint cursor);
+                                gint end, gboolean whitespace,
+                                gboolean boundary);
+void markyd_undo_push(MarkydUndo *undo, const gchar *text, gint cursor);
 
 /*
  * Hand over the current state and get the neighbouring one back. Both return
  * FALSE when the matching stack is empty, leaving the out parameters
- * untouched. On success *out_markdown is owned by the caller.
+ * untouched. On success *out_text is owned by the caller.
  */
-gboolean markyd_undo_undo(MarkydUndo *undo, const gchar *markdown, gint cursor,
-                          gchar **out_markdown, gint *out_cursor);
-gboolean markyd_undo_redo(MarkydUndo *undo, const gchar *markdown, gint cursor,
-                          gchar **out_markdown, gint *out_cursor);
+gboolean markyd_undo_undo(MarkydUndo *undo, const gchar *text, gint cursor,
+                          gchar **out_text, gint *out_cursor);
+gboolean markyd_undo_redo(MarkydUndo *undo, const gchar *text, gint cursor,
+                          gchar **out_text, gint *out_cursor);
 
 #endif /* MARKYD_UNDO_H */

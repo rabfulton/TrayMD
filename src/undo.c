@@ -9,7 +9,7 @@
 #define UNDO_PAUSE_US G_USEC_PER_SEC
 
 typedef struct _UndoStep {
-  gchar *markdown;
+  gchar *text;
   gint cursor;
 } UndoStep;
 
@@ -25,10 +25,10 @@ struct _MarkydUndo {
   gboolean break_after;
 };
 
-static UndoStep *step_new(const gchar *markdown, gint cursor) {
+static UndoStep *step_new(const gchar *text, gint cursor) {
   UndoStep *step = g_new0(UndoStep, 1);
 
-  step->markdown = g_strdup(markdown ? markdown : "");
+  step->text = g_strdup(text ? text : "");
   step->cursor = cursor;
   return step;
 }
@@ -39,7 +39,7 @@ static void step_free(gpointer data) {
   if (!step) {
     return;
   }
-  g_free(step->markdown);
+  g_free(step->text);
   g_free(step);
 }
 
@@ -52,8 +52,8 @@ static void close_group(MarkydUndo *self) {
 }
 
 /* Hand the step's text to the caller and drop the wrapper. */
-static void step_take(UndoStep *step, gchar **out_markdown, gint *out_cursor) {
-  *out_markdown = step->markdown;
+static void step_take(UndoStep *step, gchar **out_text, gint *out_cursor) {
+  *out_text = step->text;
   *out_cursor = step->cursor;
   g_free(step);
 }
@@ -91,7 +91,8 @@ void markyd_undo_clear(MarkydUndo *self) {
 }
 
 gboolean markyd_undo_needs_step(MarkydUndo *self, gboolean insert, gint start,
-                                gint end, gboolean whitespace) {
+                                gint end, gboolean whitespace,
+                                gboolean boundary) {
   gint64 now;
   gboolean adjacent;
   gboolean opens;
@@ -111,7 +112,7 @@ gboolean markyd_undo_needs_step(MarkydUndo *self, gboolean insert, gint start,
   adjacent = insert ? (start == self->group_edge)
                     : (start == self->group_edge || end == self->group_edge);
 
-  opens = !self->group_open || self->break_after ||
+  opens = boundary || !self->group_open || self->break_after ||
           self->group_insert != insert || !adjacent ||
           (now - self->group_time) > UNDO_PAUSE_US;
 
@@ -119,12 +120,12 @@ gboolean markyd_undo_needs_step(MarkydUndo *self, gboolean insert, gint start,
   self->group_insert = insert;
   self->group_edge = insert ? end : start;
   self->group_time = now;
-  self->break_after = whitespace;
+  self->break_after = whitespace || boundary;
 
   return opens;
 }
 
-void markyd_undo_push(MarkydUndo *self, const gchar *markdown, gint cursor) {
+void markyd_undo_push(MarkydUndo *self, const gchar *text, gint cursor) {
   if (!self) {
     return;
   }
@@ -133,24 +134,24 @@ void markyd_undo_push(MarkydUndo *self, const gchar *markdown, gint cursor) {
   g_queue_free_full(self->redo, step_free);
   self->redo = g_queue_new();
 
-  g_queue_push_head(self->undo, step_new(markdown, cursor));
+  g_queue_push_head(self->undo, step_new(text, cursor));
 
   while (g_queue_get_length(self->undo) > UNDO_MAX_STEPS) {
     step_free(g_queue_pop_tail(self->undo));
   }
 }
 
-gboolean markyd_undo_undo(MarkydUndo *self, const gchar *markdown, gint cursor,
-                          gchar **out_markdown, gint *out_cursor) {
+gboolean markyd_undo_undo(MarkydUndo *self, const gchar *text, gint cursor,
+                          gchar **out_text, gint *out_cursor) {
   UndoStep *step;
 
-  if (!self || !out_markdown || !out_cursor || g_queue_is_empty(self->undo)) {
+  if (!self || !out_text || !out_cursor || g_queue_is_empty(self->undo)) {
     return FALSE;
   }
 
   step = g_queue_pop_head(self->undo);
-  g_queue_push_head(self->redo, step_new(markdown, cursor));
-  step_take(step, out_markdown, out_cursor);
+  g_queue_push_head(self->redo, step_new(text, cursor));
+  step_take(step, out_text, out_cursor);
 
   /* Whatever gets typed next belongs to a step of its own. */
   close_group(self);
@@ -158,17 +159,17 @@ gboolean markyd_undo_undo(MarkydUndo *self, const gchar *markdown, gint cursor,
   return TRUE;
 }
 
-gboolean markyd_undo_redo(MarkydUndo *self, const gchar *markdown, gint cursor,
-                          gchar **out_markdown, gint *out_cursor) {
+gboolean markyd_undo_redo(MarkydUndo *self, const gchar *text, gint cursor,
+                          gchar **out_text, gint *out_cursor) {
   UndoStep *step;
 
-  if (!self || !out_markdown || !out_cursor || g_queue_is_empty(self->redo)) {
+  if (!self || !out_text || !out_cursor || g_queue_is_empty(self->redo)) {
     return FALSE;
   }
 
   step = g_queue_pop_head(self->redo);
-  g_queue_push_head(self->undo, step_new(markdown, cursor));
-  step_take(step, out_markdown, out_cursor);
+  g_queue_push_head(self->undo, step_new(text, cursor));
+  step_take(step, out_text, out_cursor);
 
   close_group(self);
 

@@ -597,13 +597,12 @@ void markyd_editor_set_content(MarkydEditor *self, const gchar *content) {
   schedule_markdown_apply(self);
 }
 
-gchar *markyd_editor_get_content(MarkydEditor *self) {
+static gchar *editor_get_display_text(MarkydEditor *self) {
   GtkTextIter start, end;
   GString *out;
   GtkTextIter iter;
   GtkTextIter run_start;
   gchar *raw;
-  gchar *converted;
 
   gtk_text_buffer_get_bounds(self->buffer, &start, &end);
 
@@ -640,7 +639,13 @@ gchar *markyd_editor_get_content(MarkydEditor *self) {
   }
 
   raw = gstring_steal_compat(out);
-  converted = display_to_markdown_text(raw);
+  return raw;
+}
+
+gchar *markyd_editor_get_content(MarkydEditor *self) {
+  gchar *raw = editor_get_display_text(self);
+  gchar *converted = display_to_markdown_text(raw);
+
   g_free(raw);
   return converted;
 }
@@ -719,14 +724,15 @@ static gint editor_cursor_markdown_offset(MarkydEditor *self) {
 }
 
 static void editor_push_undo_step(MarkydEditor *self) {
-  gchar *markdown = markyd_editor_get_content(self);
+  gchar *text = editor_get_display_text(self);
 
-  markyd_undo_push(self->undo, markdown, editor_cursor_markdown_offset(self));
-  g_free(markdown);
+  markyd_undo_push(self->undo, text, editor_cursor_markdown_offset(self));
+  g_free(text);
 }
 
 static void editor_record_edit(MarkydEditor *self, gboolean insert, gint start,
-                               gint end, gboolean whitespace) {
+                               gint end, gboolean whitespace,
+                               gboolean boundary) {
   gboolean opens;
 
   if (self->undo_suppress) {
@@ -735,7 +741,8 @@ static void editor_record_edit(MarkydEditor *self, gboolean insert, gint start,
 
   /* Keep the grouping state current even for an edit we won't snapshot, so
    * the one after it still sees where the last edit left off. */
-  opens = markyd_undo_needs_step(self->undo, insert, start, end, whitespace);
+  opens = markyd_undo_needs_step(self->undo, insert, start, end, whitespace,
+                                 boundary);
 
   /*
    * Replacing a selection - by typing, pasting or dropping over it - reaches
@@ -761,14 +768,16 @@ static void on_insert_text(GtkTextBuffer *buffer, GtkTextIter *location,
   gint start;
   gint chars;
   gboolean whitespace;
+  gboolean boundary;
 
   (void)buffer;
 
   chars = (text && len > 0) ? (gint)g_utf8_strlen(text, len) : 0;
   whitespace = (chars == 1) && g_unichar_isspace(g_utf8_get_char(text));
+  boundary = chars > 1 || (chars == 1 && g_utf8_get_char(text) == '\n');
   start = gtk_text_iter_get_offset(location);
 
-  editor_record_edit(self, TRUE, start, start + chars, whitespace);
+  editor_record_edit(self, TRUE, start, start + chars, whitespace, boundary);
 }
 
 static void on_delete_range(GtkTextBuffer *buffer, GtkTextIter *start,
@@ -785,7 +794,8 @@ static void on_delete_range(GtkTextBuffer *buffer, GtkTextIter *start,
   whitespace = (end_offset - start_offset == 1) &&
                g_unichar_isspace(gtk_text_iter_get_char(start));
 
-  editor_record_edit(self, FALSE, start_offset, end_offset, whitespace);
+  editor_record_edit(self, FALSE, start_offset, end_offset, whitespace,
+                     FALSE);
 }
 
 /*
@@ -814,50 +824,55 @@ static void on_end_user_action(GtkTextBuffer *buffer, gpointer user_data) {
 }
 
 /*
- * Put the note back to "markdown" by replacing only the run of text that
- * actually differs. Rewriting the whole buffer would reset the scroll position
- * and strip every tag, which is exactly what an undo must not do.
+ * Compare the rendered text, not its Markdown source. List markers are shown
+ * as bullets and horizontal rules add child anchors, so Markdown offsets do
+ * not always name the same buffer range.
  */
-static void editor_restore(MarkydEditor *self, const gchar *current,
-                           const gchar *markdown, gint cursor) {
-  gsize current_len = strlen(current);
-  gsize markdown_len = strlen(markdown);
-  gsize shortest = MIN(current_len, markdown_len);
+static void editor_restore(MarkydEditor *self, const gchar *text,
+                           gint cursor) {
+  gchar *current_display = editor_get_display_text(self);
+  gsize current_len = strlen(current_display);
+  gsize text_len = strlen(text);
+  gsize shortest = MIN(current_len, text_len);
   gsize head = 0;
   gsize tail = 0;
   gint replace_start;
   gint replace_end;
   GtkTextIter start, end;
 
-  while (head < shortest && current[head] == markdown[head]) {
+  while (head < shortest && current_display[head] == text[head]) {
     head++;
   }
   while (tail < shortest - head &&
-         current[current_len - 1 - tail] == markdown[markdown_len - 1 - tail]) {
+         current_display[current_len - 1 - tail] ==
+             text[text_len - 1 - tail]) {
     tail++;
   }
 
   /* Both ends have to sit on a character boundary, never inside a UTF-8
    * sequence. Backing off keeps the two strings in agreement. */
-  while (head > 0 && (current[head] & 0xC0) == 0x80) {
+  while (head > 0 && (current_display[head] & 0xC0) == 0x80) {
     head--;
   }
-  while (tail > 0 && (current[current_len - tail] & 0xC0) == 0x80) {
+  while (tail > 0 &&
+         (current_display[current_len - tail] & 0xC0) == 0x80) {
     tail--;
   }
 
-  replace_start = (gint)g_utf8_strlen(current, (gssize)head);
+  replace_start = (gint)g_utf8_strlen(current_display, (gssize)head);
   replace_end =
       replace_start +
-      (gint)g_utf8_strlen(current + head, (gssize)(current_len - tail - head));
+      (gint)g_utf8_strlen(current_display + head,
+                           (gssize)(current_len - tail - head));
 
   self->undo_suppress = TRUE;
   editor_iter_at_markdown_offset(self, replace_start, &start);
   editor_iter_at_markdown_offset(self, replace_end, &end);
   gtk_text_buffer_delete(self->buffer, &start, &end);
-  gtk_text_buffer_insert(self->buffer, &start, markdown + head,
-                         (gint)(markdown_len - tail - head));
+  gtk_text_buffer_insert(self->buffer, &start, text + head,
+                         (gint)(text_len - tail - head));
   self->undo_suppress = FALSE;
+  g_free(current_display);
 
   /* Before re-rendering: the renderer looks at the cursor line to decide
    * which horizontal rule to leave in its editable form. */
@@ -879,21 +894,21 @@ static void editor_restore(MarkydEditor *self, const gchar *current,
 
 static void editor_history_step(MarkydEditor *self, gboolean redo) {
   gchar *current;
-  gchar *markdown = NULL;
+  gchar *text = NULL;
   gint cursor = 0;
   gboolean moved;
 
-  current = markyd_editor_get_content(self);
+  current = editor_get_display_text(self);
   moved = redo ? markyd_undo_redo(self->undo, current,
                                   editor_cursor_markdown_offset(self),
-                                  &markdown, &cursor)
+                                  &text, &cursor)
                : markyd_undo_undo(self->undo, current,
                                   editor_cursor_markdown_offset(self),
-                                  &markdown, &cursor);
+                                  &text, &cursor);
 
   if (moved) {
-    editor_restore(self, current, markdown, cursor);
-    g_free(markdown);
+    editor_restore(self, text, cursor);
+    g_free(text);
   }
 
   g_free(current);
