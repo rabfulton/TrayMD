@@ -12,6 +12,7 @@ A lightweight GTK 3 notes application for Linux system trays, supporting live ed
 - **Minimal UI** - Clean toolbar with new note and navigation buttons
 - **Lightweight** - Pure C, no web technologies, fast startup
 - **Hyperlink support** - 'ctrl left click' links to open them
+- **Multi-level undo/redo** - 'ctrl+z' to undo, 'ctrl+shift+z' or 'ctrl+y' to redo
 
 ## Supported Markdown
 
